@@ -15,4 +15,13 @@ object Xtdb {
     fun startNode(opts: Map<*,*> = emptyMap<Any, Any>()): IXtdb {
         return START_NODE.invoke(opts) as IXtdb
     }
+
+    class Config {
+        var rowsPerChunk = 102400L
+    }
+    
+    @JvmStatic
+    fun startNodeConfig(config: Config): IXtdb {
+        return START_NODE.invoke(config) as IXtdb
+    }
 }

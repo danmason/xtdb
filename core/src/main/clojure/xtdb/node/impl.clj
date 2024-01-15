@@ -16,7 +16,7 @@
            (java.util.concurrent CompletableFuture)
            [java.util.stream Stream]
            (org.apache.arrow.memory BufferAllocator RootAllocator)
-           (xtdb.api IXtdb IXtdbSubmitClient TransactionKey)
+           (xtdb.api IXtdb IXtdbSubmitClient TransactionKey Xtdb$Config)
            (xtdb.api.log Log)
            (xtdb.api.query Basis IKeyFn Query QueryOptions)
            (xtdb.api.tx Sql TxOptions)
@@ -154,22 +154,25 @@
     (not (ig/find-derived opts parent-k)) (assoc impl-k {})))
 
 (defn node-system [opts]
-  (-> (into {:xtdb/node {}
-             :xtdb/allocator {}
-             :xtdb/default-tz nil
-             :xtdb/indexer {}
-             :xtdb.indexer/live-index {}
-             :xtdb.log/watcher {}
-             :xtdb.metadata/metadata-manager {}
-             :xtdb.operator.scan/scan-emitter {}
-             :xtdb.query/ra-query-source {}
-             :xtdb.stagnant-log-flusher/flusher {}
-             :xtdb/compactor {}}
-            opts)
-      (doto ig/load-namespaces)
-      (with-default-impl :xtdb/log :xtdb.log/memory-log)
-      (with-default-impl :xtdb/buffer-pool :xtdb.buffer-pool/in-memory)
-      (doto ig/load-namespaces)))
+  (let [node-opts (if (map? opts)
+                    opts
+                    {:xtdb.indexer/live-index {:rows-per-chunk (.getRowsPerChunk ^Xtdb$Config opts)}})]
+    (-> (into {:xtdb/node {}
+               :xtdb/allocator {}
+               :xtdb/default-tz nil
+               :xtdb/indexer {}
+               :xtdb.indexer/live-index {}
+               :xtdb.log/watcher {}
+               :xtdb.metadata/metadata-manager {}
+               :xtdb.operator.scan/scan-emitter {}
+               :xtdb.query/ra-query-source {}
+               :xtdb.stagnant-log-flusher/flusher {}
+               :xtdb/compactor {}}
+              node-opts)
+        (doto ig/load-namespaces)
+        (with-default-impl :xtdb/log :xtdb.log/memory-log)
+        (with-default-impl :xtdb/buffer-pool :xtdb.buffer-pool/in-memory)
+        (doto ig/load-namespaces))))
 
 (defn start-node ^java.lang.AutoCloseable [opts]
   (let [!closing (atom false)
