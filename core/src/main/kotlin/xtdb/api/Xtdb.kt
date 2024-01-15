@@ -6,13 +6,13 @@ import clojure.lang.Symbol
 
 object Xtdb {
     init {
-        Clojure.`var`("clojure.core", "require").invoke(Symbol.intern("xtdb.node"))
+        Clojure.`var`("clojure.core", "require").invoke(Symbol.intern("xtdb.node.impl"))
     }
 
-    private val START_NODE: IFn = Clojure.`var`("xtdb.node", "start-node")
-
+    private val START_NODE: IFn = Clojure.`var`("xtdb.node.impl", "start-node")
     @JvmStatic
-    fun startNode(): IXtdb {
-        return START_NODE.invoke() as IXtdb
+    @JvmOverloads
+    fun startNode(opts: Map<*,*> = emptyMap<Any, Any>()): IXtdb {
+        return START_NODE.invoke(opts) as IXtdb
     }
 }
