@@ -31,6 +31,9 @@
   (subscribe [this after-tx-id subscriber]
     (.subscribe subscriber-handler this after-tx-id subscriber)))
 
+(defn open-log []
+  (InMemoryLog. (atom []) (log/->notifying-subscriber-handler nil) (InstantSource/system)))
+
 (derive :xtdb.log/memory-log :xtdb/log)
 
 (defmethod ig/prep-key :xtdb.log/memory-log [_ opts]

@@ -16,7 +16,7 @@
            (java.util.concurrent CompletableFuture)
            [java.util.stream Stream]
            (org.apache.arrow.memory BufferAllocator RootAllocator)
-           (xtdb.api IXtdb IXtdbSubmitClient TransactionKey Xtdb$Config)
+           (xtdb.api IXtdb IXtdbSubmitClient TransactionKey Xtdb Xtdb$Config Xtdb$LocalTxLogConfig)
            (xtdb.api.log Log)
            (xtdb.api.query Basis IKeyFn Query QueryOptions)
            (xtdb.api.tx Sql TxOptions)
@@ -153,10 +153,14 @@
   (cond-> opts
     (not (ig/find-derived opts parent-k)) (assoc impl-k {})))
 
+(defn xtdb-config->opts-map [^Xtdb$Config opts]
+  {:xtdb.indexer/live-index {:rows-per-chunk (.getRowsPerChunk (.indexer opts))}
+   :xtdb/log {:factory (.getTxLog opts)}})
+
 (defn node-system [opts]
   (let [node-opts (if (map? opts)
                     opts
-                    {:xtdb.indexer/live-index {:rows-per-chunk (.getRowsPerChunk (.indexer ^Xtdb$Config opts))}})]
+                    (xtdb-config->opts-map opts))]
     (-> (into {:xtdb/node {}
                :xtdb/allocator {}
                :xtdb/default-tz nil
