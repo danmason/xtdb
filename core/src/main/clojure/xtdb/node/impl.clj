@@ -154,13 +154,13 @@
     (not (ig/find-derived opts parent-k)) (assoc impl-k {})))
 
 (defn xtdb-config->opts-map [^Xtdb$Config opts]
-  {:xtdb.indexer/live-index {:rows-per-chunk (.getRowsPerChunk (.indexer opts))}
-   :xtdb/log {:factory (.getTxLog opts)}})
+  (into {:xtdb.indexer/live-index {:rows-per-chunk (.getRowsPerChunk (.indexer opts))}
+         ;;:xtdb/log {:factory (.getTxLog opts)}
+         }
+        (.getExtraConfig opts)))
 
 (defn node-system [opts]
-  (let [node-opts (if (map? opts)
-                    opts
-                    (xtdb-config->opts-map opts))]
+  (let [node-opts (xtdb-config->opts-map opts)]
     (-> (into {:xtdb/node {}
                :xtdb/allocator {}
                :xtdb/default-tz nil

@@ -12,13 +12,6 @@ object Xtdb {
     }
 
     private val START_NODE: IFn = Clojure.`var`("xtdb.node.impl", "start-node")
-
-    @JvmStatic
-    @JvmOverloads
-    fun startNode(opts: Map<*, *> = emptyMap<Any, Any>()): IXtdb {
-        return START_NODE.invoke(opts) as IXtdb
-    }
-
     class IndexerConfig {
         var rowsPerChunk = 102400L
     }
@@ -46,14 +39,17 @@ object Xtdb {
         val indexer = IndexerConfig()
 
         var txLog: TxLogConfig = InMemoryTxLogConfig
+
+        var extraConfig: Map<*,*> = emptyMap<Any, Any>()
     }
 
     @JvmStatic
-    fun startNodeConfig(config: Config): IXtdb {
+    @JvmOverloads
+    fun startNode(config: Config = Config()): IXtdb {
         return START_NODE.invoke(config) as IXtdb
     }
 
-    fun startNodeConfig(build: Config.() -> Unit): IXtdb {
-        return startNodeConfig(Config().also(build))
+    fun startNode(build: Config.() -> Unit): IXtdb {
+        return startNode(Config().also(build))
     }
 }
