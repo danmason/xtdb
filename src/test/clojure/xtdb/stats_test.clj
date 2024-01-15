@@ -12,7 +12,7 @@
 
 (deftest test-scan
   (with-open [node (Xtdb/startNodeConfig (doto (Xtdb$Config.)
-                                     (.setRowsPerChunk 2)))]
+                                           (-> .indexer (.setRowsPerChunk 2))))]
     (let [scan-emitter (util/component node :xtdb.operator.scan/scan-emitter)]
       (xt/submit-tx node [(xt/put :foo {:xt/id "foo1"})
                           (xt/put :bar {:xt/id "bar1"})])

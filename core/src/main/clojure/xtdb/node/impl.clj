@@ -156,7 +156,7 @@
 (defn node-system [opts]
   (let [node-opts (if (map? opts)
                     opts
-                    {:xtdb.indexer/live-index {:rows-per-chunk (.getRowsPerChunk ^Xtdb$Config opts)}})]
+                    {:xtdb.indexer/live-index {:rows-per-chunk (.getRowsPerChunk (.indexer ^Xtdb$Config opts))}})]
     (-> (into {:xtdb/node {}
                :xtdb/allocator {}
                :xtdb/default-tz nil
