@@ -1,5 +1,4 @@
 import dev.clojurephant.plugin.clojure.tasks.ClojureCompile
-import java.io.File
 
 evaluationDependsOnChildren()
 
@@ -9,6 +8,7 @@ plugins {
     id("io.freefair.aggregate-javadoc") version "6.6"
     kotlin("jvm")
     kotlin("plugin.serialization")
+    id("org.jetbrains.dokka")
 }
 
 val defaultJvmArgs = listOf(
@@ -44,8 +44,14 @@ allprojects {
     if (plugins.hasPlugin("java-library")) {
         java {
             withSourcesJar()
-            withJavadocJar()
         }
+
+        if (plugins.hasPlugin("org.jetbrains.dokka"))
+            tasks.register<Jar>("dokkaJavadocJar") {
+                dependsOn(tasks.dokkaJavadoc)
+                from(tasks.dokkaJavadoc.flatMap { it.outputDirectory })
+                archiveClassifier.set("javadoc")
+            }
 
         tasks.test {
             useJUnitPlatform {
@@ -114,6 +120,11 @@ allprojects {
             extensions.configure(PublishingExtension::class) {
                 publications.named("maven", MavenPublication::class) {
                     from(components["java"])
+
+                    if (plugins.hasPlugin("org.jetbrains.dokka"))
+                        artifact(tasks["dokkaJavadocJar"]) {
+                            this.classifier = "javadoc"
+                        }
 
                     pom {
                         url.set("https://xtdb.com")
@@ -289,7 +300,7 @@ fun createSltTask(
     maxFailures: Long = 0,
     maxErrors: Long = 0,
     testFiles: List<String> = emptyList(),
-    extraArgs: List<String> = emptyList()
+    extraArgs: List<String> = emptyList(),
 ) {
     tasks.create(taskName, JavaExec::class) {
         classpath = sourceSets.test.get().runtimeClasspath
@@ -362,3 +373,4 @@ createSltTask(
     },
     extraArgs = listOf("--dirs")
 )
+
