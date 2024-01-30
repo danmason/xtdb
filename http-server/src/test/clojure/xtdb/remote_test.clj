@@ -6,6 +6,7 @@
             [xtdb.api :as xt]
             [xtdb.client.impl :as xtc]
             [xtdb.error :as err]
+            [xtdb.node :as node]
             [xtdb.serde :as serde]
             [xtdb.test-util :as tu :refer [*node*]]
             [xtdb.tx-ops :as tx-ops])
@@ -432,3 +433,17 @@
                               :url (http-url "query")})
                :body
                decode-json*))))
+
+(deftest read-only-node
+  (let [http-port (tu/free-port)]
+    (with-open [node (node/start-node {:http-server {:port http-port
+                                                     :read-only? true}})]
+      (let [client (xtc/start-client (str "http://localhost:" http-port))]
+        (t/testing "client unable to submit to read-only node"
+          (t/is (thrown-with-msg? Exception
+                                  #"status: 403"
+                                  (xt/submit-tx client [[:put-docs :foo {:xt/id 1}]]))))
+        
+        (t/testing "client able to query read-only node"
+          (t/is (= [{:xt/id 1}]
+                   (xt/q client '(from :foo [xt/id])))))))))

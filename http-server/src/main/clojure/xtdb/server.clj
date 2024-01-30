@@ -121,11 +121,14 @@
                            (assoc-in [:formats "application/json" :encoder] (json-tx-encoder))
                            (assoc-in [:formats "application/json" :decoder] (json-tx-decoder))))
 
-   :post {:handler (fn [{:keys [^IXtdb node] :as req}]
-                     (let [{:keys [tx-ops opts]} (get-in req [:parameters :body])]
-                       (-> (.submitTxAsync node opts (into-array TxOp tx-ops))
-                           (util/then-apply (fn [tx]
-                                              {:status 200, :body tx})))))
+   :post {:handler (fn [{:keys [^IXtdb node read-only?] :as req}]
+                     (if read-only?
+                       {:status 403
+                        :body {:error "forbidden: read-only HTTP node"}}
+                       (let [{:keys [tx-ops opts]} (get-in req [:parameters :body])]
+                         (-> (.submitTxAsync node opts (into-array TxOp tx-ops))
+                             (util/then-apply (fn [tx]
+                                                {:status 200, :body tx}))))))
 
           ;; TODO spec-tools doesn't handle multi-spec with a vector,
           ;; so we just check for vector and then conform later.
