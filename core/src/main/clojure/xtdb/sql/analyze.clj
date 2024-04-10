@@ -616,6 +616,9 @@
                 [(-> {:identifier (identifier id)}
                      (vary-meta assoc :ref us))])))))
 
+(defn sort-asterisk-columns [columns]
+  (sort-by :identifier #(or (= %1 "xt$id") (compare %1 %2)) columns))
+
 (defn expand-asterisk [ag]
   (r/zcase ag
     :table_primary
@@ -630,6 +633,7 @@
           grouping-columns-set (set grouping-columns)]
       (->>
        projections
+       (sort-asterisk-columns)
        (map-indexed
         (fn [idx {:keys [identifier index outer-name]}]
           (cond-> (with-meta {:index idx} {:table table})
