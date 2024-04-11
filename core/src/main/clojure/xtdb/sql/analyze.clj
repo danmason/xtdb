@@ -114,6 +114,12 @@
         [:identifier_chain _ ^:z ident]]]
       ;;=>
       (identifier ident)
+              
+      [:derived_column
+       [:column_reference
+        [:identifier_chain ^:z ident]]]
+      ;;=>
+      (identifier ident)
 
       [:derived_column
        [:column_reference
@@ -1064,12 +1070,7 @@
             [])))
 
       :unqualified
-      (if (order-by-index (:ref (meta column-reference)))
-        [] ;;references an unqualified derived column in the select list
-        ;; perhaps the below error should mention unqualifed cols are valid within
-        ;; order-by if referring to derived col from select list
-        [(format "XTDB requires fully-qualified columns: %s %s"
-                 (->src-str ag) (->line-info-str ag))])
+      []
 
       :invalid-group-invariant
       [(format "Column reference is not a grouping column: %s %s"
