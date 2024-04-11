@@ -1989,3 +1989,11 @@
 
     (t/is (= [{:x 3}]
              (xt/q tu/*node* "SELECT docs.x FROM docs WHERE has_table_privilege('docs', 'select') ")))))
+
+(t/deftest test-select-asterisk-return-order
+  (xt/submit-tx tu/*node* [[:put-docs :docs {:c 4 :xt/id 1 :b 3 :a "a"}]])
+
+  ;; Since we currently return clojure maps, any field ordering is only guaranteed when < 9 elements -
+  ;; if/when we have an option to return results as tuples, we can update this test accordingly 
+  (t/is (= [[:xt/id 1] [:a "a"] [:b 3] [:c 4]]
+           (mapv identity (first (xt/q tu/*node* "SELECT * FROM docs"))))))
