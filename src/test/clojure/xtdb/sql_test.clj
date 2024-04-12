@@ -2041,3 +2041,26 @@
                                         WHERE o.customer_id = c.xt$id)
                                 AS orders
                        FROM customers c")))))
+
+(t/deftest test-unqualified-columns-2524
+  (xt/submit-tx tu/*node* [[:put-docs :docs {:xt/id 1 :x "x" :y "y"}]
+                           [:put-docs :foo {:xt/id 1 :x "x"}]])
+
+  (t/is (= [{:x "x"}]
+           (xt/q tu/*node* "SELECT x from docs")))
+
+  (t/is (= [{:x "x" :y "y"}]
+           (xt/q tu/*node* "SELECT x, y from docs")))
+
+  (t/is (= [{:x "x" :y "y"}]
+           (xt/q tu/*node* "SELECT x, docs.y from docs")))
+
+  (t/is (thrown-with-msg?
+         IllegalArgumentException
+         #"Unqualified field x is ambiguous, found in multiple tables"
+         (xt/q tu/*node* "SELECT x from docs, foo")))
+
+  (t/is (thrown-with-msg?
+         IllegalArgumentException
+         #"Unqualified field y not found in any table"
+         (xt/q tu/*node* "SELECT y from foo"))))
