@@ -5,7 +5,8 @@
             [xtdb.logical-plan :as lp]
             [xtdb.serde :as serde]
             [xtdb.sql :as sql]
-            [xtdb.test-util :as tu]))
+            [xtdb.test-util :as tu]
+            [clojure.string :as string]))
 
 (t/use-fixtures :each tu/with-mock-clock tu/with-node)
 
@@ -626,7 +627,7 @@
       "test-dynamic-parameters-temporal-filters-3068-between"
       (plan-sql "SELECT bar FROM foo FOR VALID_TIME BETWEEN ? AND ?"
                 {:table-info {"foo" #{"bar"}}}))))
-  
+
   (t/testing "AS OF SYSTEM TIME"
     (t/is
      (=plan-file
@@ -1330,11 +1331,11 @@
 (t/deftest test-generated-column-names
   (t/is (= [{:xt/column-1 1, :xt/column-2 3}]
            (xt/q tu/*node* "SELECT LEAST(1,2), LEAST(3,4) FROM (VALUES (1)) x")))
-  
+
   (t/testing "Aggregates"
     (t/is (= [{:xt/column-1 1}]
              (xt/q tu/*node* "SELECT COUNT(*) FROM (VALUES (1)) x"))))
-  
+
   (t/testing "ARRAY()"
    (xt/submit-tx tu/*node* [[:put-docs :a {:xt/id 1 :a 42}]
                             [:put-docs :b {:xt/id 2 :b1 "one" :b2 42}]])
@@ -1345,10 +1346,10 @@
 (t/deftest test-select-without-from
   (t/is (= [{:xt/column-1 1}]
            (xt/q tu/*node* "SELECT 1")))
-  
+
   (t/is (= [{:xt/column-1 1 :xt/column-2 2}]
            (xt/q tu/*node* "SELECT 1, 2")))
-  
+
   (t/is (= [{:xt/column-1 "xtdb"}]
            (xt/q tu/*node* "SELECT current_user"))))
 
@@ -1460,7 +1461,7 @@
 
   (t/is (= [{:col1 "cat", :avg 2000.0} {:col1 "fish", :avg 1000.0}]
            (xt/q tu/*node* "SELECT T1.col1, AVG(t1.col2) avg FROM t1 GROUP BY T1.col1")))
-  
+
   (t/is (= [{:col2 3000}]
            (xt/q tu/*node*
                  "SELECT \"TEEONE\".col2 FROM \"T1\" AS \"TEEONE\" WHERE \"TEEONE\".\"CoL1\" IN ( SELECT t1.\"col1\" FROM T1 WHERE T1.col1 = \"TEEONE\".\"CoL1\" ) ORDER BY \"TEEONE\".col2")))
@@ -1489,3 +1490,19 @@
   (xt/execute-tx tu/*node* [[:put-docs :docs {:xt/id :foo :bar 1}]])
   (t/is (:committed? (xt/execute-tx tu/*node* [[:sql "ERASE FROM docs WHERE docs.xt$id IN (SELECT docs.xt$id FROM docs WHERE docs.bar = 1)"]])))
   (t/is (= [] (xt/q tu/*node* "SELECT * FROM docs"))))
+
+(deftest test-memory-leak
+  ;; Do all of the INSERTS
+  (with-open [rdr (io/reader (io/resource "xtdb/inserts"))]
+    (let [lines (line-seq rdr)
+          sql-inserts (mapv (fn [line] [:sql line]) lines)]
+      (t/is (:committed? (xt/execute-tx tu/*node* sql-inserts)))))
+
+  (xt/q tu/*node*
+        "SELECT a9+c4, b4+124+d8, c3, d8+558, d1
+                     FROM t9, t4, t8, t1, t3
+                     WHERE b4 in (532,593,289,476,749,35,816)
+                     AND d9 in (808,662,597,682,628,568)
+                     AND e8 in (792,14,646)
+                     AND 729=a3
+                     AND a1 in (622,380,862,52,640,776,268,536)"))

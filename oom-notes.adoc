@@ -1,0 +1,668 @@
+= OoM Investigations
+
+Thought that I would start with a single file/set of tests to help narrow down the issue. As such, I commented out all but "select4.test" and ran `slt-test` with just that. I ran it twice, to see if the first OoM was thrown at the same time - it was.
+
+## First OoM message
+
+The first point we get back an OutOfMemoryError on the java heap space is at like 100849 in the log. More specifically, the following query:
+```sql
+SELECT e1+908+c5, a7*505+b6, e5, e6+864, a9*77, d4
+  FROM t9, t1, t5, t4, t6, t7
+ WHERE d6 in (493,500,463,161,277,337,600,72)
+   AND (324=a1 OR a1=668 OR 61=a1 OR 195=a1)
+   AND e9 in (149,549,737)
+   AND e7 in (844,183,506,884)
+   AND (b4=175 OR b4=964)
+   AND c5 in (915,797,797,384,844,485,672)
+```
+
+This query is labeled `join42` and is at line `30714` within the test file. Before going to dig in to this query in the slightest, it seems worth mentioning some of the other issues/errors observed within the file.
+
+## Other Observations
+
+### 'Memory was leaked' messages prior to our OoM exceptions
+
+We see a number of the following prior to the above OoM exception being thrown:
+- `10:28:49.033 [main] ERROR o.apache.arrow.memory.BaseAllocator - Memory was leaked by query. Memory leaked: (1073741760)
+Allocator(BoundQuery/openCursor) 0/1073741760/3322675008/9223372036854775807 (res/actual/peak/limit)`
+
+There are a number of examples of queries doing this, below I plan to investigate the first instance of this we see.
+
+
+### Illegal Argument Exceptions
+
+We also see a large number of Illegal Argument exceptions being thrown with the following message: `xtdb.IllegalArgumentException: union incompatible cols`. This is first thrown at line `3269` in the file, with the following query:
+
+```sql
+SELECT c8 FROM t8
+   WHERE d8 in (883,523,81,667,20,690,124,2)
+      OR e8 in (608,874,592,632)
+      OR c8 in (461,461,501,979,111)
+INTERSECT
+  SELECT d3 FROM t3
+   WHERE NOT ((a3=162)
+           OR d3 in (314,896,501,118,508,134,548,825,923,423,17))
+UNION
+  SELECT a6 FROM t6
+   WHERE (490=c6 AND 778=d6 AND 933=b6 AND 794=e6 AND 799=a6)
+      OR b6 in (267,512,537,158,92,421,230,232,229)
+UNION ALL
+  SELECT a7 FROM t7
+   WHERE c7 in (744,305,931,853)
+EXCEPT
+  SELECT c5 FROM t5
+   WHERE NOT ((104=e5 AND d5=729 AND 380=b5 AND c5=723)
+           OR (826=a5 AND e5=937 AND 923=c5 AND b5=79)
+           OR a5 in (597,297,429,331,99,544,373))
+EXCEPT
+  SELECT d9 FROM t9
+   WHERE NOT ((c9=955 AND 864=b9 AND 264=e9 AND a9=535)
+           OR d9 in (770,25,681,23,660,270,618,608,967)
+           OR e9 in (197,264,947,19,737))
+EXCEPT
+  SELECT c2 FROM t2
+   WHERE NOT (c2 in (819,894,551,449,127))
+EXCEPT
+  SELECT a1 FROM t1
+   WHERE NOT ((731=e1 OR d1=972 OR e1=89)
+           OR b1 in (828,779,233,729,128,75,766,91,822,995))
+``` 
+
+## Looking at the memory leaking query
+
+I'm going to start by looking at the query that is throwing the memory leak error, (see <<memoryleak,above>>).
+
+The query is as follows:
+```sql
+SELECT a9+c4, b4+124+d8, c3, d8+558, d1
+  FROM t9, t4, t8, t1, t3
+ WHERE b4 in (532,593,289,476,749,35,816)
+   AND d9 in (808,662,597,682,628,568)
+   AND e8 in (792,14,646)
+   AND 729=a3
+   AND a1 in (622,380,862,52,640,776,268,536)
+```
+
+Here's the query plan we are outputting from this, post-optimization:
+
+```clojure
+{:plan
+ [:project
+  [{xt$column_1 (+ t9.1/a9 t4.2/c4)}
+   {xt$column_2 (+ (+ t4.2/b4 124) t8.3/d8)}
+   {c3 t3.5/c3}
+   {xt$column_4 (+ t8.3/d8 558)}
+   {d1 t1.4/d1}]
+  [:map
+   [{xt$sq_3 true}]
+   [:semi-join
+    [(= xt$needle xt.values.9/xt$column_1)]
+    [:map
+     [{xt$needle t1.4/a1}]
+     [:map
+      [{xt$sq_1 true}]
+      [:semi-join
+       [(= xt$needle xt.values.7/xt$column_1)]
+       [:map
+        [{xt$needle t9.1/d9}]
+        [:map
+         [{xt$sq_2 true}]
+         [:semi-join
+          [(= xt$needle xt.values.8/xt$column_1)]
+          [:map
+           [{xt$needle t8.3/e8}]
+           [:map
+            [{xt$sq_0 true}]
+            [:semi-join
+             [(= xt$needle xt.values.6/xt$column_1)]
+             [:map
+              [{xt$needle t4.2/b4}]
+              [:mega-join
+               []
+               [[:rename t9.1 [:scan {:table t9} [d9 a9]]]
+                [:rename t4.2 [:scan {:table t4} [b4 c4]]]
+                [:rename t8.3 [:scan {:table t8} [d8 e8]]]
+                [:rename t1.4 [:scan {:table t1} [d1 a1]]]
+                [:rename t3.5 [:scan {:table t3} [{a3 (= 729 a3)} c3]]]]]]
+             [:rename
+              xt.values.6
+              [:table
+               [xt$column_1]
+               [{:xt$column_1 532}
+                {:xt$column_1 593}
+                {:xt$column_1 289}
+                {:xt$column_1 476}
+                {:xt$column_1 749}
+                {:xt$column_1 35}
+                {:xt$column_1 816}]]]]]]
+          [:rename xt.values.8 [:table [xt$column_1] [{:xt$column_1 792} {:xt$column_1 14} {:xt$column_1 646}]]]]]]
+       [:rename
+        xt.values.7
+        [:table
+         [xt$column_1]
+         [{:xt$column_1 808}
+          {:xt$column_1 662}
+          {:xt$column_1 597}
+          {:xt$column_1 682}
+          {:xt$column_1 628}
+          {:xt$column_1 568}]]]]]]
+    [:rename
+     xt.values.9
+     [:table
+      [xt$column_1]
+      [{:xt$column_1 622}
+       {:xt$column_1 380}
+       {:xt$column_1 862}
+       {:xt$column_1 52}
+       {:xt$column_1 640}
+       {:xt$column_1 776}
+       {:xt$column_1 268}
+       {:xt$column_1 536}]]]]]],
+ :col-syms [xt$column_1 xt$column_2 c3 xt$column_4 d1]}
+```
+
+Also, taking a closer look at the code exactly _where_ said error is thrown - it's during the process of closing the query processor, in particular, here's the `close` method from `wrap-cursor`:
+
+```clojure
+(close [_]
+  (.release ref-ctr)
+  (util/close cursor)
+  (util/close wm)
+  (util/close al))
+```
+
+At the point of calling `util/close` on `al` (the BufferAllocator, as we can see from the error message), we call down to `arrow.memory.BaseAllocator.closer()` and we throw that `Memory was leaked by query.`
+
+Can see the exact point said error was thrown here: https://github.com/apache/arrow/blob/9f5899019d23b2b1eae2fedb9f6be8827885d843/java/memory/memory-core/src/main/java/org/apache/arrow/memory/BaseAllocator.java#L488 
+
+Summarising from the comment above - error is thrown as there is unaccounted-for outstanding allocation.
+
+### Plan on main
+
+Here's the plan for the query on `main`.
+
+Pre-optimisation:
+
+```clojure
+[:project
+  [{xt$column_1 (+ t9__114_a9 t4__119_c4)}
+   {xt$column_2 (+ (+ t4__119_b4 124) t8__124_d8)}
+   {c3 t3__134_c3}
+   {xt$column_4 (+ t8__124_d8 558)}
+   {d1 t1__129_d1}]
+  [:select
+   (= 729 t3__134_a3)
+   [:apply
+    :semi-join
+    {t1__129_a1 ?t1__129_a1}
+    [:apply
+     :semi-join
+     {t8__124_e8 ?t8__124_e8}
+     [:apply
+      :semi-join
+      {t9__114_d9 ?t9__114_d9}
+      [:apply
+       :semi-join
+       {t4__119_b4 ?t4__119_b4}
+       [:cross-join
+        [:cross-join
+         [:cross-join
+          [:cross-join
+           [:rename t9__114 [:scan {:table t9} [a9 d9]]]
+           [:rename t4__119 [:scan {:table t4} [c4 b4]]]]
+          [:rename t8__124 [:scan {:table t8} [d8 e8]]]]
+         [:rename t1__129 [:scan {:table t1} [d1 a1]]]]
+        [:rename t3__134 [:scan {:table t3} [c3 a3]]]]
+       [:select
+        (= ?t4__119_b4 xt$subquery__168_xt$column_1)
+        [:rename
+         xt$subquery__168
+         [:table
+          [xt$column_1]
+          [{xt$column_1 532}
+           {xt$column_1 593}
+           {xt$column_1 289}   
+        {xt$column_1 476}
+           {xt$column_1 749}
+           {xt$column_1 35}
+           {xt$column_1 816}]]]]]
+      [:select
+       (= ?t9__114_d9 xt$subquery__209_xt$column_1)
+       [:rename
+        xt$subquery__209
+        [:table
+         [xt$column_1]
+         [{xt$column_1 808}
+          {xt$column_1 662}
+          {xt$column_1 597}
+          {xt$column_1 682}
+          {xt$column_1 628}
+          {xt$column_1 568}]]]]]
+     [:select
+      (= ?t8__124_e8 xt$subquery__247_xt$column_1)
+      [:rename
+       xt$subquery__247
+       [:table
+        [xt$column_1]
+        [{xt$column_1 792} {xt$column_1 14} {xt$column_1 646}]]]]]
+    [:select
+     (= ?t1__129_a1 xt$subquery__295_xt$column_1)
+     [:rename
+      xt$subquery__295
+      [:table
+       [xt$column_1]
+       [{xt$column_1 622}
+        {xt$column_1 380}
+        {xt$column_1 862}
+        {xt$column_1 52}
+        {xt$column_1 640}
+        {xt$column_1 776}
+        {xt$column_1 268}
+        {xt$column_1 536}]]]]]]]
+```
+
+Post-optimisation:
+
+
+```clojure
+[:rename
+ {x28 xt$column_1, x29 xt$column_2, x13 c3, x30 xt$column_4, x10 d1}
+ [:project
+  [{x28 (+ x9 x3)} {x29 (+ (+ x4 124) x6)} x13 {x30 (+ x6 558)} x10]
+  [:mega-join
+   []
+   [[:rename {c3 x13, a3 x14} [:scan {:table t3} [c3 {a3 (= 729 a3)}]]]
+    [:semi-join
+     [{x11 x25}]
+     [:rename {a9 x9, d1 x10, a1 x11} [:scan {:table t1} [a9 d1 a1]]]
+     [:table [x25] [{x25 622} {x25 380} {x25 862} {x25 52} {x25 640} {x25 776} {x25 268} {x25 536}]]]
+    [:semi-join
+     [{x7 x22}]
+     [:rename {d8 x6, e8 x7} [:scan {:table t8} [d8 e8]]]
+     [:table [x22] [{x22 792} {x22 14} {x22 646}]]]
+    [:semi-join
+     [{x1 x19}]
+     [:rename {d9 x1} [:scan {:table t9} [d9]]]
+     [:table [x19] [{x19 808} {x19 662} {x19 597} {x19 682} {x19 628} {x19 568}]]]
+    [:semi-join
+     [{x4 x16}]
+     [:rename {c4 x3, b4 x4} [:scan {:table t4} [c4 b4]]]
+     [:table [x16] [{x16 532} {x16 593} {x16 289} {x16 476} {x16 749} {x16 35} {x16 816}]]]]]]]
+```
+
+We can see that there is a decent amount of divergence between the plans outputted from the new/old planner. In part, seems like there might be some relation to `predicate-conjunctive-clauses` and the lack thereof in the new planner. (See here: https://github.com/xtdb/xtdb/blob/94d9c8140b6e9f5b46ba71dc362d7f93b8768f69/core/src/main/clojure/xtdb/sql/plan.clj#L1284C1-L1285C9)
+
+Might be worth spending some time attempting to re-implement/follow along what we see here.
+
+```
+;From logical plan
+(defn and-predicate? [predicate]
+  (and (sequential? predicate)
+       (= 'and (first predicate))))
+       
+(defn or-predicate? [predicate]
+  (and (sequential? predicate)
+       (= 'or (first predicate))))
+
+(defn flatten-expr [pred expr]
+  (if (pred expr)
+    (mapcat (partial flatten-expr pred) (rest expr))
+    [expr]))
+
+;From main
+(defn- predicate-conjunctive-clauses [predicate]
+  (if (lp/or-predicate? predicate)
+    (let [disjuncts (->> (lp/flatten-expr lp/or-predicate? predicate)
+                         (map predicate-conjunctive-clauses))
+          common-disjuncts (->> (map set disjuncts)
+                                (reduce set/intersection))
+          disjuncts (for [disjunct disjuncts
+                          :let [filtered-disjunct (remove common-disjuncts disjunct)]]
+                      (if (seq filtered-disjunct)
+                        (if (= 1 (count filtered-disjunct))
+                          (first filtered-disjunct)
+                          (cons 'and filtered-disjunct))
+                        (if (= 1 (count disjunct))
+                          (first disjunct)
+                          (cons 'and disjunct))))
+          disjuncts (if (> (count disjuncts) 1)
+                      (cons 'or disjuncts)
+                      (first disjuncts))]
+      (cond-> (seq common-disjuncts)
+        disjuncts (concat [disjuncts])))
+    (lp/flatten-expr lp/and-predicate? predicate)))
+
+
+(defn- plan-subquery-containg-clause [sc relation joined-tables]
+  (let [sc-expr (expr sc)
+        predicates (predicate-conjunctive-clauses sc-expr)
+        predicate-set (set predicates)
+        [new-relation predicate-set]
+        (reduce
+          (fn [[new-relation predicate-set] sq]
+            (apply-predicative-subquery new-relation (interpret-subquery sq joined-tables) predicate-set))
+          [relation predicate-set]
+          (find-sub-queries sc))
+        unused-predicates (filter #(contains? predicate-set %) predicates)]
+    [new-relation unused-predicates]))
+```
+
+## Looking at the OoM query
+
+Moving on to the query that first throws the OoM exception:
+
+```sql
+SELECT e1+908+c5, a7*505+b6, e5, e6+864, a9*77, d4
+  FROM t9, t1, t5, t4, t6, t7
+ WHERE d6 in (493,500,463,161,277,337,600,72)
+   AND (324=a1 OR a1=668 OR 61=a1 OR 195=a1)
+   AND e9 in (149,549,737)
+   AND e7 in (844,183,506,884)
+   AND (b4=175 OR b4=964)
+   AND c5 in (915,797,797,384,844,485,672)
+```
+
+Here's the query plan pre-optimization:
+```clojure
+{:plan
+ [:project
+  [xt$column_1
+   xt$column_2
+   {e5 t5.3/e5}
+   xt$column_4
+   xt$column_5
+   {d4 t4.4/d4}]
+  [:project
+   [{xt$column_1 (+ (+ t1.2/e1 908) t5.3/c5)}
+    {xt$column_2 (+ (* t7.6/a7 505) t6.5/b6)}
+    t5.3/e5
+    {xt$column_4 (+ t6.5/e6 864)}
+    {xt$column_5 (* t9.1/a9 77)}
+    t4.4/d4]
+   [:select
+    xt$sq_3
+    [:select
+     (or (= t4.4/b4 175) (= t4.4/b4 964))
+     [:select
+      xt$sq_2
+      [:select
+       xt$sq_1
+       [:select
+        (or
+         (or (or (= 324 t1.2/a1) (= t1.2/a1 668)) (= 61 t1.2/a1))
+         (= 195 t1.2/a1))
+        [:select
+         xt$sq_0
+         [:apply
+          {:mark-join
+           {xt$sq_3 (= ?xt$needle xt.values.10/xt$column_1)}}
+          {xt$needle ?xt$needle}
+          [:map
+           [{xt$needle t5.3/c5}]
+           [:apply
+            {:mark-join
+             {xt$sq_1 (= ?xt$needle xt.values.8/xt$column_1)}}
+            {xt$needle ?xt$needle}
+            [:map
+             [{xt$needle t9.1/e9}]
+             [:apply
+              {:mark-join
+  
+             {xt$sq_2 (= ?xt$needle xt.values.9/xt$column_1)}}
+              {xt$needle ?xt$needle}
+              [:map
+               [{xt$needle t7.6/e7}]
+               [:apply
+                {:mark-join
+                 {xt$sq_0 (= ?xt$needle xt.values.7/xt$column_1)}}
+                {xt$needle ?xt$needle}
+                [:map
+                 [{xt$needle t6.5/d6}]
+                 [:mega-join
+                  []
+                  [[:rename
+                    t9.1
+                    [:scan
+                     {:table t9, :for-valid-time :all-time}
+                     [a9 e9]]]
+                   [:rename
+                    t1.2
+                    [:scan
+                     {:table t1, :for-valid-time :all-time}
+                     [e1 a1]]]
+                   [:rename
+                    t5.3
+                    [:scan
+                     {:table t5, :for-valid-time :all-time}
+                     [c5 e5]]]
+                   [:rename
+                    t4.4
+                    [:scan
+                     {:table t4, :for-valid-time :all-time}
+                     [b4 d4]]]
+                   [:rename
+                    t6.5
+                    [:scan
+                     {:table t6, :for-valid-time :all-time}
+                     [b6 d6 e6]]]
+                   [:rename
+                    t7.6
+                    [:scan
+                     {:table t7, :for-valid-time :all-time}
+                     [a7 e7]]]]]]
+                [:rename
+                 xt.values.7
+                 [:table
+                  [xt$column_1]
+                  [{:xt$column_1 493}
+                   {:xt$column_1 500}
+                   {:xt$column_1 463}
+                   {:xt$column_1 161}
+                   {:xt$column_1 277}
+                   {:xt$column_1 337}
+                   {:xt$column_1 600}
+                   {:xt$column_1 72}]]]]]
+              [:rename
+               xt.values.9
+               [:table
+                [xt$column_1]
+                [{:xt$column_1 844}
+                 {:xt$column_1 183}
+                 {:xt$column_1 506}
+                 {:xt$column_1 884}]]]]]
+            [:rename
+             xt.values.8
+             [:table
+              [xt$column_1]
+              [{:xt$column_1 149}
+               {:xt$column_1 549}
+               {:xt$column_1 737}]]]]]
+          [:rename
+           xt.values.10
+           [:table
+            [xt$column_1]
+            [{:xt$column_1 915}
+             {:xt$column_1 797}
+             {:xt$column_1 797}
+             {:xt$column_1 384}
+             {:xt$column_1 844}
+             {:xt$column_1 485}
+             {:xt$column_1 672}]]]]]]]]]]]],
+ :col-syms [xt$column_1 xt$column_2 e5 xt$column_4 xt$column_5 d4]}
+```
+
+Here's the query plan, post-optimization:
+
+```clojure
+{:plan
+ [:project
+  [{xt$column_1 (+ (+ t1.2/e1 908) t5.3/c5)}
+   {xt$column_2 (+ (* t7.6/a7 505) t6.5/b6)}
+   {e5 t5.3/e5}
+   {xt$column_4 (+ t6.5/e6 864)}
+   {xt$column_5 (* t9.1/a9 77)}
+   {d4 t4.4/d4}]
+  [:map
+   [{xt$sq_3 true}]
+   [:semi-join
+    [(= xt$needle xt.values.10/xt$column_1)]
+    [:map
+     [{xt$needle t5.3/c5}]
+     [:map
+      [{xt$sq_1 true}]
+      [:semi-join
+       [(= xt$needle xt.values.8/xt$column_1)]
+       [:map
+        [{xt$needle t9.1/e9}]
+        [:map
+         [{xt$sq_2 true}]
+         [:semi-join
+          [(= xt$needle xt.values.9/xt$column_1)]
+          [:map
+           [{xt$needle t7.6/e7}]
+           [:map
+            [{xt$sq_0 true}]
+            [:semi-join
+             [(= xt$needle xt.values.7/xt$column_1)]
+             [:map
+              [{xt$needle t6.5/d6}]
+              [:mega-join
+               []
+               [[:rename t9.1 [:scan {:table t9} [a9 e9]]]
+                [:rename t1.2 [:scan {:table t1} [e1 {a1 (or (or (or (= 324 a1) (= a1 668)) (= 61 a1)) (= 195 a1))}]]]
+                [:rename t5.3 [:scan {:table t5} [c5 e5]]]
+                [:rename t4.4 [:scan {:table t4} [{b4 (or (= b4 175) (= b4 964))} d4]]]
+                [:rename t6.5 [:scan {:table t6} [b6 d6 e6]]]
+                [:rename t7.6 [:scan {:table t7} [a7 e7]]]]]]
+             [:rename
+              xt.values.7
+              [:table
+               [xt$column_1]
+               [{:xt$column_1 493}
+                {:xt$column_1 500}
+                {:xt$column_1 463}
+                {:xt$column_1 161}
+                {:xt$column_1 277}
+                {:xt$column_1 337}
+                {:xt$column_1 600}
+                {:xt$column_1 72}]]]]]]
+          [:rename
+           xt.values.9
+           [:table [xt$column_1] [{:xt$column_1 844} {:xt$column_1 183} {:xt$column_1 506} {:xt$column_1 884}]]]]]]
+       [:rename xt.values.8 [:table [xt$column_1] [{:xt$column_1 149} {:xt$column_1 549} {:xt$column_1 737}]]]]]]
+    [:rename
+     xt.values.10
+     [:table
+      [xt$column_1]
+      [{:xt$column_1 915}
+       {:xt$column_1 797}
+       {:xt$column_1 797}
+       {:xt$column_1 384}
+       {:xt$column_1 844}
+       {:xt$column_1 485}
+       {:xt$column_1 672}]]]]]],
+ :col-syms [xt$column_1 xt$column_2 e5 xt$column_4 xt$column_5 d4]}
+```
+
+### Query plans on Main
+
+Here's the query plans for this query on main - both pre and post optimization:
+
+Pre-Optimization:
+```clojure
+[:project
+ [{xt$column_1 (+ (+ t1__147_e1 908) t5__152_c5)}
+  {xt$column_2 (+ (* t7__167_a7 505) t6__162_b6)}
+  {e5 t5__152_e5}
+  {xt$column_4 (+ t6__162_e6 864)}
+  {xt$column_5 (* t9__142_a9 77)}
+  {d4 t4__157_d4}]
+ [:select
+  (or (= t4__157_b4 175) (= t4__157_b4 964))
+  [:select
+   (or (or (or (= 324 t1__147_a1) (= t1__147_a1 668)) (= 61 t1__147_a1)) (= 195 t1__147_a1))
+   [:apply
+    :semi-join
+    {t5__152_c5 ?t5__152_c5}
+    [:apply
+     :semi-join
+     {t7__167_e7 ?t7__167_e7}
+     [:apply
+      :semi-join
+      {t9__142_e9 ?t9__142_e9}
+      [:apply
+       :semi-join
+       {t6__162_d6 ?t6__162_d6}
+       [:cross-join
+        [:cross-join
+         [:cross-join
+          [:cross-join
+           [:cross-join [:rename t9__142 [:scan {:table t9} [a9 e9]]] [:rename t1__147 [:scan {:table t1} [e1 a1]]]]
+           [:rename t5__152 [:scan {:table t5} [c5 e5]]]]
+          [:rename t4__157 [:scan {:table t4} [d4 b4]]]]
+         [:rename t6__162 [:scan {:table t6} [b6 e6 d6]]]]
+        [:rename t7__167 [:scan {:table t7} [a7 e7]]]]
+       [:select
+        (= ?t6__162_d6 xt$subquery__203_xt$column_1)
+        [:rename
+         xt$subquery__203
+         [:table
+          [xt$column_1]
+          [{xt$column_1 493}
+           {xt$column_1 500}
+           {xt$column_1 463}
+           {xt$column_1 161}
+           {xt$column_1 277}
+           {xt$column_1 337}
+           {xt$column_1 600}
+           {xt$column_1 72}]]]]]
+      [:select
+       (= ?t9__142_e9 xt$subquery__329_xt$column_1)
+       [:rename xt$subquery__329 [:table [xt$column_1] [{xt$column_1 149} {xt$column_1 549} {xt$column_1 737}]]]]]
+     [:select
+      (= ?t7__167_e7 xt$subquery__358_xt$column_1)
+      [:rename
+       xt$subquery__358
+       [:table [xt$column_1] [{xt$column_1 844} {xt$column_1 183} {xt$column_1 506} {xt$column_1 884}]]]]]
+    [:select
+     (= ?t5__152_c5 xt$subquery__430_xt$column_1)
+     [:rename
+      xt$subquery__430
+      [:table
+       [xt$column_1]
+       [{xt$column_1 915}
+        {xt$column_1 797}
+        {xt$column_1 797}
+        {xt$column_1 384}
+        {xt$column_1 844}
+        {xt$column_1 485}
+        {xt$column_1 672}]]]]]]]]
+```
+
+Post optimization:
+```
+[:rename
+ {x32 xt$column_1, x33 xt$column_2, x8 e5, x34 xt$column_4, x35 xt$column_5, x10 d4}
+ [:project
+  [{x32 (+ (+ x4 908) x7)} {x33 (+ (* x17 505) x13)} x8 {x34 (+ x14 864)} {x35 (* x1 77)} x10]
+  [:mega-join
+   []
+   [[:semi-join
+     [{x18 x26}]
+     [:rename {a7 x17, e7 x18} [:scan {:table t7} [a7 e7]]]
+     [:table [x26] [{x26 844} {x26 183} {x26 506} {x26 884}]]]
+    [:semi-join
+     [{x15 x20}]
+     [:rename {b6 x13, e6 x14, d6 x15} [:scan {:table t6} [b6 e6 d6]]]
+     [:table [x20] [{x20 493} {x20 500} {x20 463} {x20 161} {x20 277} {x20 337} {x20 600} {x20 72}]]]
+    [:rename {d4 x10, b4 x11} [:scan {:table t4} [d4 {b4 (or (= b4 175) (= b4 964))}]]]
+    [:semi-join
+     [{x7 x29}]
+     [:rename {c5 x7, e5 x8} [:scan {:table t5} [c5 e5]]]
+     [:table [x29] [{x29 915} {x29 797} {x29 797} {x29 384} {x29 844} {x29 485} {x29 672}]]]
+    [:semi-join
+     [{x2 x23}]
+     [:rename {a9 x1, e9 x2} [:scan {:table t9} [a9 e9]]]
+     [:table [x23] [{x23 149} {x23 549} {x23 737}]]]
+    [:rename {e1 x4, a1 x5} [:scan {:table t1} [e1 {a1 (or (or (or (= 324 a1) (= a1 668)) (= 61 a1)) (= 195 a1))}]]]]]]]
+```

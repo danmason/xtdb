@@ -303,12 +303,13 @@ createSltTask(
     "slt-test",
     testFiles = listOf(
         "xtdb.test",
-        "select1.test", "select2.test", "select3.test", "select4.test",
+        // "select1.test", "select2.test", "select3.test", 
+        "select4.test",
         // "select5.test",
-        "random/expr/slt_good_0.test",
-        "random/aggregates/slt_good_0.test",
-        "random/groupby/slt_good_0.test",
-        "random/select/slt_good_0.test"
+        // "random/expr/slt_good_0.test",
+        // "random/aggregates/slt_good_0.test",
+        // "random/groupby/slt_good_0.test",
+        // "random/select/slt_good_0.test"
     )
 )
 

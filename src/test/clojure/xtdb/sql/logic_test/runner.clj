@@ -477,6 +477,10 @@
 
   (time (-main "--verify" "--db" "sqlite" "src/test/resources/xtdb/sql/logic_test/sqlite_test/select4.test"))
 
+  (-main "--verify" "--db" "xtdb" "src/test/resources/xtdb/sql/logic_test/sqlite_test/memoryleak.test")
+
+  (-main "--verify" "--db" "xtdb" "src/test/resources/xtdb/sql/logic_test/sqlite_test/oom.test")
+
   (time (-main "--verify" "--direct-sql" "--db" "xtdb" "src/test/resources/xtdb/sql/logic_test/direct-sql/dml.test"))
 
   ;; regnerating a direct-sql file
