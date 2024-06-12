@@ -230,6 +230,23 @@
         (t/is (= [:upload :upload :complete] (get-remote-calls bp)))
         (test-get-object bp (util/->path "min-part-multi2") (utf8-buf "123"))))))
 
+(defn bp-arrow-multipart-test [{:keys [^IBufferPool buffer-pool num-arrow-values]}]
+  (t/testing "multipart arrow file upload"
+    (let [schema (Schema. [(types/col-type->field "a" :i32)])]
+      (with-open [vsr (VectorSchemaRoot/create schema tu/*allocator*)
+                  w (.openArrowWriter buffer-pool (util/->path "aw") vsr)]
+        (let [^IntVector v (.getVector vsr "a")]
+          (.setValueCount v num-arrow-values)
+          (dotimes [x num-arrow-values] (.set v x x))
+          (.writeBatch w)
+          (.end w))) 
+      
+      (util/with-open [buf @(.getBuffer buffer-pool (util/->path "aw"))] 
+        (let [{:keys [root]} (util/read-arrow-buf buf)]
+          (t/is buf)
+          (t/is root)
+          (util/close root))))))
+
 (t/deftest arrow-ipc-test
   (with-open [bp (remote-test-buffer-pool)]
     (t/testing "multipart, arrow ipc"

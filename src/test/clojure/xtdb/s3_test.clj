@@ -1,7 +1,10 @@
 (ns xtdb.s3-test
-  (:require [clojure.test :as t]
+  (:require [clojure.string :as string]
+            [clojure.test :as t]
             [juxt.clojars-mirrors.integrant.core :as ig]
             [xtdb.api :as xt]
+            [xtdb.buffer-pool :as bp]
+            [xtdb.buffer-pool-test :as bp-test]
             [xtdb.datasets.tpch :as tpch]
             [xtdb.node :as xtn]
             [xtdb.object-store-test :as os-test]
@@ -14,7 +17,7 @@
            [java.time Duration]
            [software.amazon.awssdk.services.s3 S3AsyncClient]
            [software.amazon.awssdk.services.s3.model ListMultipartUploadsRequest ListMultipartUploadsResponse MultipartUpload]
-           [xtdb.api.storage ObjectStore S3 S3$Factory]
+           [xtdb.api.storage ObjectStore S3 S3$Factory Storage]
            [xtdb.buffer_pool RemoteBufferPool]
            [xtdb.multipart IMultipartUpload SupportsMultipart]))
 
@@ -155,13 +158,32 @@
 
       ;; Ensure can query back out results
       (t/is (= [{:e "bar2"} {:e "bar1"} {:e "bar3"}]
-               (xt/q node '(from :bar [{:xt/id e}])))) 
-      
-      (let [{:keys [^ObjectStore object-store] :as buffer-pool} (val (first (ig/find-derived (:system node) :xtdb/buffer-pool)))]
-        (t/is (instance? RemoteBufferPool buffer-pool))
-        (t/is (instance? ObjectStore object-store))
-        ;; Ensure some files are written
-        (t/is (seq (.listAllObjects object-store)))))))
+               (xt/q node '(from :bar [{:xt/id e}]))))
+
+      (let [buffer-pool ^RemoteBufferPool (val (first (ig/find-derived (:system node) :xtdb/buffer-pool)))
+            all-objects (mapv str (.listAllObjects buffer-pool))] 
+        (for [arrow-file-name (filter #(string/ends-with? % ".arrow") all-objects)]
+          (let [arrow-buf @(.getBuffer buffer-pool (util/->path arrow-file-name))]
+            ;; Arrow IPC test 
+            (t/is (util/read-arrow-buf arrow-buf))))))))
+
+(defn s3-backed-buffer-pool ^xtdb.IBufferPool [prefix local-disk-cache]
+  (bp/open-remote-storage
+   tu/*allocator*
+   (Storage/remoteStorage (-> (S3/s3 bucket sns-topic-arn)
+                              (.prefix (util/->path (str prefix))))
+                          local-disk-cache)))
+
+(t/deftest ^:s3 multipart-arrow-file-upload
+  (tu/with-allocator
+    (fn []
+      (util/with-tmp-dirs #{local-disk-cache}
+        (with-open [bp (s3-backed-buffer-pool (random-uuid) local-disk-cache)]
+          ;; Writing ints to arrow vector - 32 bit integers
+          ;; Minimum part size on S3 is 5MiB so we need to write at least 5iMB of data
+          ;; Write 6.4MB of data - ie, 1.6 million 32 bit integers 
+          (bp-test/bp-arrow-multipart-test {:buffer-pool bp 
+                                            :num-arrow-values 1600000}))))))
 
 ;; Using large enough TPCH ensures multiparts get properly used within the bufferpool
 #_(t/deftest ^:s3 tpch-test-node
