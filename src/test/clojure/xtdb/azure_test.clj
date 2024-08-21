@@ -6,6 +6,7 @@
             [juxt.clojars-mirrors.integrant.core :as ig]
             [xtdb.api :as xt]
             [xtdb.azure :as azure]
+            [xtdb.buffer-pool :as bp]
             [xtdb.datasets.tpch :as tpch]
             [xtdb.node :as xtn]
             [xtdb.object-store-test :as os-test]
@@ -111,20 +112,20 @@
                               #"At least one of storageAccount or storageAccountEndpoint must be provided."
                               (azure/open-object-store (-> (AzureBlobStorage/azureBlobStorage nil container servicebus-namespace servicebus-topic-name)
                                                            (.prefix (util/->path (str prefix))))))))
-    
+
     (t/testing "storageAccountEndpoint specified - should work correctly"
       (with-open [os (azure/open-object-store (-> (AzureBlobStorage/azureBlobStorage nil container servicebus-namespace servicebus-topic-name)
                                                   (.prefix (util/->path (str prefix)))
                                                   (.storageAccountEndpoint "https://xtdbteststorageaccount.blob.core.windows.net")))]
         (os-test/put-edn os (util/->path "alice") :alice)
         (t/is (= (mapv util/->path ["alice"]) (.listAllObjects ^ObjectStore os)))))
-    
+
     (t/testing "neither serviceBusNamespace or serviceBusNamespaceFQDN provided - should throw illegal-arg"
       (t/is (thrown-with-msg? IllegalArgumentException
                               #"At least one of serviceBusNamespace or serviceBusNamespaceEndpoint must be provided."
                               (azure/open-object-store (-> (AzureBlobStorage/azureBlobStorage storage-account container nil servicebus-topic-name)
                                                            (.prefix (util/->path (str prefix))))))))
-    
+
     (t/testing "serviceBusNamespaceFQDN specified - should work correctly"
       (with-open [os (azure/open-object-store (-> (AzureBlobStorage/azureBlobStorage storage-account container nil servicebus-topic-name)
                                                   (.prefix (util/->path (str prefix)))
@@ -153,10 +154,10 @@
             (t/testing "EventHubLog successfully created"
               (let [log (get-in node [:system :xtdb/log])]
                 (t/is (instance? Log log))))
-            
+
             (t/is (xt/execute-tx node [[:put-docs :foo {:xt/id "foo"}]]))
-            (t/is (= [{:e "foo"}] (xt/q node '(from :foo [{:xt/id e}])))))) 
-        
+            (t/is (= [{:e "foo"}] (xt/q node '(from :foo [{:xt/id e}]))))))
+
         (t/testing "connecting to previously created event-hub"
           (with-open [node (xtn/start-node {:log [:azure {:namespace eventhub-namespace
                                                           :event-hub-name event-hub-name
@@ -166,7 +167,7 @@
             ;; Allow the log to catch up 
             (Thread/sleep wait-time-ms)
             (t/is (= [{:e "foo"}] (xt/q node '(from :foo [{:xt/id e}]))))))
-        
+
         (finally
           ;; Clearup eventhub 
           (let [credential (.build (DefaultAzureCredentialBuilder.))]
@@ -203,10 +204,16 @@
             (let [uncomitted-blobs (fetch-uncomitted-blobs blob-container-client prefix)]
               (= #{"test-multi-created"} uncomitted-blobs)))
 
-          (t/testing "Call to abort a multipart upload should work - uncomitted blob removed"
+          (t/testing "Call to abort a multipart upload should work - uncomitted blob removed & no file present"
             @(.abort multipart-upload)
+
+            (log/info "prefix" prefix)
+
             (let [uncomitted-blobs (fetch-uncomitted-blobs blob-container-client prefix)]
-              (= #{} uncomitted-blobs))))))))
+              (= #{} uncomitted-blobs))
+
+            (= #{} (list-filenames blob-container-client prefix (-> (ListBlobsOptions.)
+                                                                    (.setPrefix (str prefix)))))))))))
 
 (t/deftest ^:azure multipart-put-test
   (with-open [os (object-store (random-uuid))]
@@ -258,10 +265,10 @@
         (t/testing "Deleting file should make it unavailable on both object stores"
         ;; Delete object from store
           @(.deleteObject ^ObjectStore os-1 (util/->path "multi-put-list-test"))
-          
+
         ;; Wait to let the service bus catch up
           (Thread/sleep wait-time-ms)
-          
+
           (t/is (= [] (.listAllObjects ^ObjectStore os-1)))
           (t/is (= [] (.listAllObjects ^ObjectStore os-2))))))))
 
@@ -327,7 +334,7 @@
       (dotimes [_ 20]
         (let [file-part ^ByteBuffer (os-test/generate-random-byte-buffer part-size)]
           @(.uploadPart multipart-upload (.flip file-part))))
-      
+
       (t/testing "Call to complete a multipart upload should work - should be removed from the uncomitted list"
         @(.complete multipart-upload)
         (let [uncomitted-blobs (fetch-uncomitted-blobs blob-container-client prefix)]
@@ -357,7 +364,7 @@
 
           (t/is (= (mapv util/->path ["test-multipart"])
                    (.listAllObjects ^ObjectStore os)))
-          
+
           (let [uncomitted-blobs (fetch-uncomitted-blobs blob-container-client prefix)]
             (t/is (= #{} uncomitted-blobs)))))
 
@@ -368,14 +375,43 @@
               (t/is @(.uploadPart second-multipart-upload (.flip file-part)))))
 
           @(.complete second-multipart-upload)
-          
+
           (let [uncomitted-blobs (fetch-uncomitted-blobs blob-container-client prefix)]
             (t/is (= #{} uncomitted-blobs)))))
-      
+
       (t/testing "still has the original object"
         (t/is (= (mapv util/->path ["test-multipart"])
                  (.listAllObjects ^ObjectStore os)))
-        
+
         (let [^ByteBuffer uploaded-buffer @(.getObject ^ObjectStore os (util/->path "test-multipart"))]
           (t/testing "capacity should be equal to total of 2 parts (ie, initial upload)"
             (t/is (= (* 2 part-size) (.capacity uploaded-buffer)))))))))
+
+(t/deftest ^:azure interrupt-multipart-upload
+  (with-open [os (object-store (random-uuid))]
+    (let [blob-container-client (:blob-container-client os)
+          prefix (:prefix os)
+          parts (repeatedly 5 #(.flip (os-test/generate-random-byte-buffer 10000000)))
+          upload-thread (Thread.
+                         (fn []
+                           (try
+                             ;; Start the multipart upload
+                             (#'bp/upload-multipart-buffers os (util/->path "multipart-interrupted") parts)
+                             (catch InterruptedException _
+                               (log/warn "Upload was interrupted")))))]
+            ;; Start the upload thread
+      (.start upload-thread)
+    
+            ;; Give it some time to start uploading
+      (Thread/sleep 3000)
+    
+      (.interrupt upload-thread)
+    
+      (t/testing "no uncomitted blobs should be present"
+        (let [uncomitted-blobs (fetch-uncomitted-blobs blob-container-client prefix)]
+          (t/is (= #{} uncomitted-blobs))))
+    
+      (t/testing "no comitted blobs should be present"
+        (= #{} (list-filenames blob-container-client prefix (-> (ListBlobsOptions.)
+                                                                (.setPrefix (str prefix)))))))))
+
