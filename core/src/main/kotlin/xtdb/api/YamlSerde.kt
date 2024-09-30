@@ -108,6 +108,20 @@ object StringMapWithEnvVarsSerde : KSerializer<Map<String, String>> {
     }
 }
 
+object IntWithEnvVarSerde : KSerializer<Int> {
+    override val descriptor: SerialDescriptor = PrimitiveSerialDescriptor("IntWithEnvVars", PrimitiveKind.INT)
+
+    override fun serialize(encoder: Encoder, value: Int) {
+        throw UnsupportedOperationException("YAML serialization of config is not supported.")
+    }
+
+    override fun deserialize(decoder: Decoder): Int {
+        val yamlInput: YamlInput = decoder as YamlInput
+        val str = handleEnvTag(yamlInput)
+        return str.toInt()
+    }
+}
+
 /**
  * @suppress
  */
