@@ -29,6 +29,7 @@ ARG GIT_SHA
 ARG XTDB_VERSION
 ENV GIT_SHA=${GIT_SHA}
 ENV XTDB_VERSION=${XTDB_VERSION}
+ENV POSTGRES_PORT=5432
 
 LABEL org.opencontainers.image.version=${XTDB_VERSION}
 LABEL org.opencontainers.image.revision=${GIT_SHA}
