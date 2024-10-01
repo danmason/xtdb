@@ -2,19 +2,18 @@
 title: Setting up a cluster on Azure
 ---
 
-This guide will walk you through the process of configuring & running an XTDB Node on Azure. This setup will:
+This guide will walk you through the process of configuring & running an XTDB Cluster on Azure. This setup will:
 
-* Use **Apache Kafka** as the Transaction Log implementation.
 * Use **Azure Blob Storage** as the Remote Storage implementation.
-* Run a HTTP server on the node to allow interaction over REST - exposed to the internet via Azure Container Apps ingress configuration.
+* Use **Apache Kafka** as the shared Transaction Log implementation.
+* Expose the node to the internet via HTTP, the Postgres Wire Protocol, and collect metrics via Prometheus.
 
-NOTE: In addition to the HTTP server, the node will also run a Prometheus metrics server on port `8080` and a pgwire server on port `5432`. 
-These will not be covered within this guide and are not exposed from the container app in the sample Terraform templates, but are available on the Docker image for advanced usage. 
-
-All of the infrastructure will be running on Azure, setting up all the dependent resources, services and roles within a set of `terraform` templates, available in the https://github.com/xtdb/xtdb/tree/main/modules/azure/docs/azure-setup-guide/terraform[**XTDB repository**].
+All of the infrastructure will be running on Azure, setting up the dependent resources, services and roles within a set of `terraform` templates. 
+The application itself will be running on Azure Managed Kubernetes Service (AKS), using a provided template. 
+All of these can be found on the https://github.com/xtdb/xtdb/tree/main/modules/azure/docs/azure-setup-guide[**XTDB repository**]. 
 
 While we provide numerous parameters to configure the templates, you're encouraged to edit them & use them as a base for more advanced use cases, and to reuse existing infrastructure where appropriate. 
-These templates are designed to be a simple starting point for running XTDB on Azure, and should be modified to suit your specific requirements if being used in a production environment.
+These templates are designed to be a simple starting point for running XTDB on Azure & Kubernetes, and should be modified to suit your specific requirements if being used in a production environment.
 
 The guide assumes that you are using the default templates.
 
@@ -24,7 +23,8 @@ Before starting, ensure you have the following installed:
 
 * The **Azure CLI** - See the link:https://learn.microsoft.com/en-us/cli/azure/[Installation Instructions].
 * **Terraform** - See the link:https://developer.hashicorp.com/terraform/tutorials/aws-get-started/install-cli[Installation Instructions].
-* Download the contents of the folder containing the Terraform templates, from the https://github.com/xtdb/xtdb/tree/main/modules/azure/docs/azure-setup-guide/terraform[**XTDB repository**].
+* **kubectl** - The Kubernetes CLI, used to interact with the AKS cluster. See the link:https://kubernetes.io/docs/tasks/tools/install-kubectl/[Installation Instructions].
+* Download the contents of the folder containing the Terraform templates & kubernetes config, from the https://github.com/xtdb/xtdb/tree/main/modules/azure/docs/azure-setup-guide[**XTDB repository**]. 
 
 === Authenticating the Azure CLI
 
@@ -55,17 +55,17 @@ Before applying or creating any resources, initialize the Terraform working dire
 This will download the necessary provider plugins for Azure, set up the sample modules, and configure the backend for storing the state.
 
 First, create a new resource group to store the Terraform state. 
-For this guide, we'll use "xtdbterraform" as the resource group name and "West Europe" as the location. 
+For this guide, we'll use "xtdbterraform" as the resource group name and "East US" as the location. 
 These can be changed as appropriate.
 
 ```bash
-az group create --name xtdbterraform --location "West Europe"
+az group create --name xtdbterraform --location "East US"
 ```
 
 Create the storage account to store the Terraform state - the name of the `$TfStateStorageAccount` must be globally unique.
 
 ```bash
-az storage account create --name $TfStateStorageAccount --resource-group xtdbterraform --location "West Europe" --sku Standard_LRS
+az storage account create --name $TfStateStorageAccount --resource-group xtdbterraform --location "East US" --sku Standard_LRS
 ```
 
 Within this storage account, create the storage container to store the Terraform state.
@@ -85,32 +85,30 @@ terraform init \
 
 The directory is now initialized, and ready to be used to create the resources.
 
-== What is being deployed?
+== What is being deployed on Azure?
 
-The sample Terraform directory contains several modules, each responsible for different parts of the infrastructure. 
+The sample Terraform directory contains different modules - each responsible for different parts of the infrastructure. 
 If using the default configuration, the following will be created:
 
 * At the top level: an XTDB resource group, user assigned managed identity, and an environment for link:https://learn.microsoft.com/en-us/azure/container-apps/overview[Azure Container Apps].
 * **Remote Storage** infrastructure - contains the Azure infrastructure XTDB needs for using Azure Storage Blobs as Remote Storage.
   This sets up a storage account containing the blob storage container XTDB will use.
-* **Kafka** infrastructure - a basic Kafka deployment on Azure Container Apps. This sets up:
-** An Azure Storage Share on the previously created storage account, used to persist Kafka Data.
-** A simple, unauthenticated Docker image of Kafka, running on Azure Container Apps with the persistent storage mounted.
-* **XTDB App** infrastructure - sets up the XTDB node with the relevant resource references and settings passed as variables. This sets up:
-** An Azure Storage Share on the previously created storage account, used to store files for the XTDB disk cache. This is mounted to the Azure Container App environment.
-** XTDB container app, running the "XTDB Azure Standalone Docker Image" from Github Container Registry. Configured with environment variables to update the internal configuration of the node, with the disk cache storage share mounted to the container app. Network configuration is set up to expose the node's HTTP server (running on port `3000`) to the internet over HTTP.
-** The standalone Docker image sets up an XTDB node with **Kafka** as the link:https://docs.xtdb.com/config/tx-log.html[Transaction Log] and Azure Blob Storage as the link:https://docs.xtdb.com/config/storage.html[Remote Storage module].
+* **AKS** infrastructure - sets up the Azure infrastructure necessary for setting up an XTDB cluster & simple kafka on Managed Kubernetes:
+** An AKS cluster with a default system node pool - size configured by the `aks_node_pool_vm_size` 
+*** This will default to `Standard_D2_v2` (2 vCPUs, 7 GiB memory).
+** A separate application node pool - size configured by the `aks_app_node_pool_vm_size` - the XTDB nodes and sample Kafka will run on this pool.
+*** This will default to `Standard_D8_v3` (8 vCPUs, 32 GiB memory).
+** A federated identity for the AKS cluster, which will use the user assigned managed identity to access the storage account.
 
-NOTE: The Kafka module deployed within these templates is simple and unauthenticated, and is **not** intended for production use. 
-We allow XTDB itself to manage the Kafka topic creation and configuration in this example - in practice, we recommend using a production ready Kafka deployment, creating the topic in advance, and configuring XTDB to use it. 
-See the XTDB link:https://docs.xtdb.com/config/tx-log/kafka.html#_setup[Kafka Setup Docs] for more information on Kafka configuration recommendations.
+NOTE: The above infrastructure is designed for creating a simple, production ready starting point for running XTDB on Azure & Kubernetes. 
+The VM sizes and resource tiers can & should be adjusted to suit your specific requirements and cost constraints.
 
-== Deploying the Infrastructure
+== Deploying the Azure Infrastructure
 
 Before creating the Terraform resources, review and update the `terraform.tfvars` file to ensure the parameters are correctly set for your environment:
 
 * You are **required** to set a unique and valid `storage_account_name` for your environment.
-* You may also wish to change resource tiers, the location of the resource group, or the maximum sizes of storage shares.
+* You may also wish to change resource tiers, the location of the resource group, or the VM sizes used by the AKS cluster.
 
 To get a full list of the resources that will be deployed by the templates, run:
 ```bash
@@ -122,27 +120,178 @@ Finally, to create the resources, run:
 terraform apply
 ```
 
-This will create all the resources within the Azure subscription and save the state of the resources within the storage account created earlier.
+This will create all the resources within the Azure subscription and save the state of the resources within the storage account created earlier. 
 
-To see the logs of the XTDB node container app, run:
+=== Fetching the Terraform Outputs
+
+There are a number of outputs that will be generated by the Terraform templates which are necessary in setting up the XTDB nodes on the AKS cluster. 
+
+To get these outputs, run:
 ```bash
-az containerapp logs show --resource-group xtdb-resources --name xtdb-node --format text --follow
+terraform output
 ```
 
-== Connecting to the Node
+Expecting the follwing values from the above:
 
-With the infrastructure running, you should have a single XTDB node running on Azure Container Apps. 
-To find the public domain name of the node, you can run the following:
+* `kubernetes_namespace`
+* `kubernetes_service_account_name`
+* `storage_account_container`
+* `storage_account_name`
+* `user_managed_identity_client_id`
+
+== Deploying on Kubernetes
+
+With the infrastructure created on Azure, you can deploy the XTDB nodes & a sample Kafka instance on the AKS cluster. 
+
+Before applying/deploying the Kubernetes resources, ensure you have the `kubectl` CLI installed and configured to deploy & connect to the AKS cluster. 
 
 ```bash
-az containerapp show --resource-group xtdb-resources --name xtdb-node
+az aks get-credentials --resource-group xtdb-resources --name xtdb-aks-cluster
 ```
 
-This will list the details of the container app - including the fully-qualified domain name of the container app. 
-You can use this to connect to the node via HTTP:
+This will configure `kubectl` to use the credentials for the Managed Kubernetes cluster. 
+
+It is also required to create both a namespace and a service account for the deployments. 
+Values for both of these are passed into the Terraform config (via `terraform.tfvars`) to create the necessary federated identity for the AKS cluster. 
+
+The names that have been used by Terraform can be fetched from the **Terraform outputs**, and default to `xtdb-deployment` and `xtdb-service-account` respectively. To create these on the AKS cluster, run:
 
 ```bash
-curl http://$FullyQualifiedDomainName/status
+kubectl create namespace xtdb-deployment
+kubectl create serviceaccount xtdb-service-account --namespace xtdb-deployment
 ```
 
-If the above succeeds, you now have an XTDB node open to the internet over HTTP. 
+The AKS cluster is now ready for deployment,
+
+=== Deploying the Kafka Instance
+
+NOTE: The Kafka module deployed within these templates is simple and unauthenticated, and is **not** intended for production use. 
+We allow XTDB itself to manage the Kafka topic creation and configuration in this example - in practice, we recommend using a production ready Kafka deployment, creating the topic in advance, and configuring XTDB to use it. 
+See the XTDB link:https://docs.xtdb.com/config/tx-log/kafka.html#_setup[Kafka Setup Docs] for more information on Kafka configuration recommendations.
+
+To deploy the Kafka instance, run the following command from the base of the `kubernetes` directory:
+```bash
+kubectl apply -f kafka.yaml
+```
+
+This will create:
+
+* A 100GiB persistent volume claim for the Kafka data, which is backed by link:https://learn.microsoft.com/en-us/azure/aks/azure-csi-disk-storage-provision[Azure Disks]. 
+* A simple Kafka Deployment on the AKS cluster, which XTDB will use as the Transaction Log. 
+* A kubernetes service to expose the Kafka instance to the XTDB cluster.
+
+To see the status of the Kafka deployment, run:
+```bash
+kubectl get pods --namespace xtdb-deployment
+```
+
+View the logs of the Kafka pod by running:
+```bash
+kubectl logs -f deployments/kafka-app --namespace xtdb-deployment
+```
+
+=== Deploying the XTDB cluster
+
+Prior to deploying the XTDB cluster, there are a few pieces of config that require updates. 
+These can be found within the `xtdb.yaml` file, and are within a ConfigMap at the top of the file. 
+The following should be set according to the values of the terraform outputs:
+
+* `XTDB_AZURE_USER_MANAGED_IDENTITY_CLIENT_ID` - should be set to the `user_managed_identity_client_id` output.
+* `XTDB_AZURE_STORAGE_ACCOUNT` - should be set to the `storage_account_name` output.
+* `XTDB_AZURE_STORAGE_CONTAINER` - should be set to the `storage_account_container` output.
+
+To deploy the XTDB cluster, run the following command from the base of the `kubernetes` directory:
+
+```bash
+kubectl apply -f xtdb.yaml
+```
+
+This will create:
+
+* A `ConfigMap` containing shared config for the XTDB nodes.
+* A `StatefulSet` containing the XTDB nodes.
+* A 50 GiB persistent volume claim for each member of the stateful set.
+* A `LoadBalancer` Kubernetes service to expose the XTDB cluster to the internet.
+* A `Headless` Kubernetes service to expose Prometheus exporter endpoints to the rest of the AKS cluster. 
+
+To see the status of the XTDB deployment, run:
+```bash
+kubectl get pods --namespace xtdb-deployment
+```
+
+To read the logs of each individual member of the stateful set, run:
+```bash
+kubectl logs -f xtdb-statefulset-n --namespace xtdb-deployment
+```
+
+=== Accessing the XTDB Cluster
+
+Once the XTDB cluster is up and running, you can access it via the LoadBalancer service created.
+
+To get the external IP of the LoadBalancer service, run:
+```bash
+kubectl get svc xtdb-service --namespace xtdb-deployment
+```
+
+This will return the external IP of the LoadBalancer service. 
+You can use this to access the XTDB cluster via the Postgres Wire Protocol (on port `5432`), or over HTTP (on port `3000`). 
+
+```bash
+curl http://$ExternalIP:3000/status
+```
+
+If the above succeeds, you now have a load balanced XTDB cluster, open to the internet over HTTP. 
+
+== Extension: Monitoring with Grafana
+
+=== Deploying Prometheus & Grafana to AKS
+
+The XTDB nodes are each running a **Prometheus** exporter, which exposes metrics about the Java process, the nodes resource usage and performance. 
+These can be scraped by a **Prometheus** instance running on the AKS cluster, and visualized in **Grafana**. 
+
+We provide a simple deployment for both Prometheus & Grafana in the `kubernetes` directory, which can be deployed by running:
+```bash
+kubectl apply -f metrics.yaml
+```
+
+This will create:
+
+* A prometheus deployment, which scrapes the Prometheus exporter endpoints on the XTDB nodes.
+* A Kubernetes service to expose the Prometheus instance to the rest of the AKS cluster.
+* A 5GiB persistent volume claim for the Grafana data.
+* A Deployment for the Grafana instance.
+* A Kubernetes service to expose the Grafana instance to the internet.
+
+To see the status of the deployments, run:
+```bash
+kubectl get pods --namespace xtdb-deployment
+```
+
+To access the Grafana instance, you can use the external IP of the LoadBalancer service created for the Grafana instance.
+```bash
+kubectl get svc grafana --namespace xtdb-deployment
+```
+
+The Grafana dashboard can be accessed via the external IP of the LoadBalancer service, on port `3000`. The default credentials are `admin`/`admin`.
+
+=== Adding Prometheus Data Source to Grafana
+
+XTDB can be added as a Prometheus data source to Grafana, to allow for the creation of dashboards and alerts based on the metrics exposed by the XTDB nodes.
+
+To add the Prometheus data source: 
+
+* Navigate to the Grafana instance in the browser
+* Navigate to the `Connections -> Add new connection` page.
+* Search for `Prometheus` in the data source list.
+* Click `Add new data source`.
+* Set the `Name` to `xtdb`.
+* Set the `Prometheus server URL` to `http://prometheus:9090`, then Save & test.
+
+With the Prometheus data source added, the XTDB metrics are now available to Grafana. We provide a pre-configured Grafan dashboard for various useful XTDB metrics. To add this:
+
+* Navigate to the `Dashboards -> New -> New dashboard` page.
+* Click `Import dashboard`.
+* `Upload dashboard JSON file` -> upload the `grafana/dashboard.json` file from the example directory.
+
+This will create a new dashboard with a number of useful metrics about the XTDB nodes.
+
