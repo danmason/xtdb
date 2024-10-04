@@ -4,7 +4,23 @@ LABEL org.opencontainers.image.source=https://github.com/xtdb/xtdb
 LABEL org.opencontainers.image.description="XTDB Azure Benchmark 2.x"
 LABEL org.opencontainers.image.licenses="MPL-2.0"
 
+# Install unzip
+RUN apt-get update -y && \
+     apt-get upgrade -y && \
+     apt-get dist-upgrade -y && \
+     apt-get -y autoremove && \
+     apt-get clean
+RUN apt-get install unzip
+
+# Fetch YourKit Java Profiler
+RUN wget https://www.yourkit.com/download/docker/YourKit-JavaProfiler-2024.3-docker.zip -P /tmp/ && \
+  unzip /tmp/YourKit-JavaProfiler-2024.3-docker.zip -d /usr/local && \
+  rm /tmp/YourKit-JavaProfiler-2024.3-docker.zip
+
 WORKDIR /usr/local/lib/xtdb
+
+# Default Port for Yourkit
+ENV YOURKIT_PORT=10001
 
 ENTRYPOINT ["java", \
     "-Dclojure.main.report=stderr", \
@@ -12,6 +28,7 @@ ENTRYPOINT ["java", \
     "-Xmx2000m", "-Xms2000m", \
     "-XX:MaxDirectMemorySize=2000m", \
     "-XX:MaxMetaspaceSize=500m", \
+    "-agentpath:/usr/local/YourKit-JavaProfiler-2024.3/bin/linux-x86-64/libyjpagent.so=port=${YOURKIT_PORT},listen=all", \
     "--add-opens=java.base/java.nio=ALL-UNNAMED", \
     "-Dio.netty.tryReflectionSetAccessible=true", \
     "-cp","xtdb-azure-bench.jar", \
