@@ -351,13 +351,13 @@
                                                                                  (let [file-size (util/size-on-disk path)
                                                                                        nio-buffer (util/->mmap-path path)
                                                                                        buffer-release-fn (fn []
-                                                                                                           (update-evictor-key local-disk-cache-evictor k
-                                                                                                             (fn [^CompletableFuture fut]
-                                                                                                               (some-> fut
-                                                                                                                       (.thenApply (fn [{:keys [pinned? file-size]}]
-                                                                                                                                     (when pinned?
-                                                                                                                                       (swap! !evictor-max-weight + file-size))
-                                                                                                                                     {:pinned? false :file-size file-size}))))))
+                                                                                                           (let [{:keys [ctx]} @(update-evictor-key local-disk-cache-evictor k
+                                                                                                                                                    (fn [^CompletableFuture fut]
+                                                                                                                                                      (some-> fut
+                                                                                                                                                              (.thenApply (fn [{:keys [pinned? file-size]}]
+                                                                                                                                                                            {:pinned? false :file-size file-size :ctx {:previously-pinned? pinned?}})))))]
+                                                                                                             (when (:previously-pinned? ctx)
+                                                                                                               (swap! !evictor-max-weight + file-size))))
                                                                                        create-arrow-buf #(util/->arrow-buf-view allocator nio-buffer buffer-release-fn)
                                                                                        buf (cache-compute memory-store k create-arrow-buf)]
                                                                                    {:pinned? true :file-size file-size :ctx {:buf buf :previously-pinned? previously-pinned?}}))))))
