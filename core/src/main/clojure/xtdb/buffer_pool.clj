@@ -353,9 +353,11 @@
                                                                                        buffer-release-fn (fn []
                                                                                                            (let [{:keys [ctx]} @(update-evictor-key local-disk-cache-evictor k
                                                                                                                                                     (fn [^CompletableFuture fut]
-                                                                                                                                                      (some-> fut
-                                                                                                                                                              (.thenApply (fn [{:keys [pinned? file-size]}]
-                                                                                                                                                                            {:pinned? false :file-size file-size :ctx {:previously-pinned? pinned?}})))))]
+                                                                                                                                                      (-> (or fut
+                                                                                                                                                              (let [file-size (if (util/path-exists buffer-cache-path) (util/size-on-disk buffer-cache-path) 0)]
+                                                                                                                                                                (CompletableFuture/completedFuture {:pinned? false :file-size file-size})))
+                                                                                                                                                          (.thenApply (fn [{:keys [pinned? file-size]}]
+                                                                                                                                                                        {:pinned? false :file-size file-size :ctx {:previously-pinned? pinned?}})))))]
                                                                                                              (when (:previously-pinned? ctx)
                                                                                                                (swap! !evictor-max-weight + file-size))))
                                                                                        create-arrow-buf #(util/->arrow-buf-view allocator nio-buffer buffer-release-fn)
