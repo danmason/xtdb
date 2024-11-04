@@ -1,0 +1,77 @@
+Boxed math warning, xtdb/types.clj:802:33 - call: public static java.lang.Number clojure.lang.Numbers.unchecked_multiply(java.lang.Object,java.lang.Object).
+Boxed math warning, xtdb/types.clj:802:22 - call: public static java.lang.Number clojure.lang.Numbers.unchecked_add(long,java.lang.Object).
+Boxed math warning, xtdb/types.clj:802:51 - call: public static java.lang.Number clojure.lang.Numbers.unchecked_multiply(long,java.lang.Object).
+Boxed math warning, xtdb/types.clj:802:22 - call: public static java.lang.Number clojure.lang.Numbers.unchecked_add(java.lang.Object,java.lang.Object).
+Boxed math warning, xtdb/types.clj:804:27 - call: public static java.lang.Number clojure.lang.Numbers.unchecked_add(long,java.lang.Object).
+Boxed math warning, xtdb/types.clj:827:36 - call: public static java.lang.Number clojure.lang.Numbers.unchecked_multiply(java.lang.Object,java.lang.Object).
+Boxed math warning, xtdb/types.clj:827:27 - call: public static java.lang.Number clojure.lang.Numbers.unchecked_add(long,java.lang.Object).
+14:10:03.532 [main] INFO  xtdb.run-auctionmark.main - Starting node with config... 
+ # Use any available port for PGWire Server.
+server: 
+  port: 0
+
+# CONFIG FOR RUNNING WITH AZURE INFRA
+txLog: !Kafka
+  bootstrapServers: !Env KAFKA_BOOTSTRAP_SERVERS
+  txTopic: !Env XTDB_TX_TOPIC
+  filesTopic: !Env XTDB_FILES_TOPIC
+
+
+# txLog: !Local
+#   path: !Env XTDB_LOCAL_LOG_PATH
+
+storage: !Remote
+  objectStore: !Azure
+    storageAccount: !Env XTDB_AZURE_STORAGE_ACCOUNT
+    container: !Env XTDB_AZURE_STORAGE_CONTAINER
+    prefix: "xtdb-object-store"
+    userManagedIdentityClientId: !Env XTDB_AZURE_USER_MANAGED_IDENTITY_CLIENT_ID
+  localDiskCache: !Env XTDB_LOCAL_DISK_CACHE
+  maxDiskCachePercentage: 75
+
+metrics: !AzureMonitor
+  instrumentationKey: !Env XTDB_AZURE_INSTRUMENTATION_KEY
+
+14:10:04.329 [main] INFO  xtdb.metrics - tagging all metrics with node-id: bench-load-phase
+14:10:08.145 [main] INFO  xtdb.pgwire - Server started on port: 33739
+14:10:08.162 [main] INFO  xtdb.run-auctionmark.main - Running Load Phase with the following config... 
+ {:seed 0, :scale-factor 0.1}
+14:10:08.163 [main] INFO  xtdb.bench.auctionmark - start submitting load stage
+14:10:32.895 [xtdb.compactor-4] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/xt$txs/data/log-l01-fr00-nr419121-rsca.arrow - terminating put operation
+14:10:32.911 [xtdb.compactor-4] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/xt$txs/meta/log-l01-fr00-nr419121-rsca.arrow - terminating put operation
+14:10:33.586 [xtdb.compactor-5] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/public$category/data/log-l01-fr00-nr419121-rs420c.arrow - terminating put operation
+14:10:33.619 [xtdb.compactor-5] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/public$category/meta/log-l01-fr00-nr419121-rs420c.arrow - terminating put operation
+14:10:36.011 [xtdb.compactor-9] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/xt$txs/data/log-l01-fr00-nr43228a-rs193.arrow - terminating put operation
+14:10:36.028 [xtdb.compactor-9] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/xt$txs/meta/log-l01-fr00-nr43228a-rs193.arrow - terminating put operation
+14:10:38.119 [xtdb.compactor-12] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/xt$txs/data/log-l01-fr00-nr44b322-rs25b.arrow - terminating put operation
+14:10:38.161 [xtdb.compactor-12] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/xt$txs/meta/log-l01-fr00-nr44b322-rs25b.arrow - terminating put operation
+14:10:39.866 [xtdb.compactor-10] INFO  xtdb.azure.object-store - Blob already exists for https://xtdbazurebenchmark.blob.core.windows.net/xtdbazurebenchmarkcontainer/xtdb-object-store%2Fv05%2Ftables%2Fpublic%24user_attribute%2Fdata%2Flog-l01-fr419121-nr43228a-rs15800.arrow - aborting multipart upload
+14:10:39.960 [xtdb.compactor-10] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/public$user_attribute/meta/log-l01-fr419121-nr43228a-rs15800.arrow - terminating put operation
+14:10:49.729 [xtdb.compactor-15] INFO  xtdb.azure.object-store - Blob already exists for https://xtdbazurebenchmark.blob.core.windows.net/xtdbazurebenchmarkcontainer/xtdb-object-store%2Fv05%2Ftables%2Fpublic%24item%2Fdata%2Flog-l01-fr43228a-nr44b322-rsec00.arrow - aborting multipart upload
+14:10:49.857 [xtdb.compactor-15] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/public$item/meta/log-l01-fr43228a-nr44b322-rsec00.arrow - terminating put operation
+14:11:00.952 [xtdb.compactor-18] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/xt$txs/data/log-l01-fr00-nr4643ea-rs323.arrow - terminating put operation
+14:11:00.966 [xtdb.compactor-18] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/xt$txs/meta/log-l01-fr00-nr4643ea-rs323.arrow - terminating put operation
+14:11:14.020 [xtdb.compactor-20] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/xt$txs/data/log-l01-fr00-nr47d4b2-rs3eb.arrow - terminating put operation
+14:11:14.033 [xtdb.compactor-20] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/xt$txs/meta/log-l01-fr00-nr47d4b2-rs3eb.arrow - terminating put operation
+14:11:29.184 [xtdb.compactor-23] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/xt$txs/data/log-l01-fr00-nr49657a-rs4b3.arrow - terminating put operation
+14:11:29.198 [xtdb.compactor-23] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/xt$txs/meta/log-l01-fr00-nr49657a-rs4b3.arrow - terminating put operation
+14:11:45.924 [xtdb.compactor-25] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/xt$txs/data/log-l01-fr00-nr4af642-rs57b.arrow - terminating put operation
+14:11:45.937 [xtdb.compactor-25] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/xt$txs/meta/log-l01-fr00-nr4af642-rs57b.arrow - terminating put operation
+14:11:58.179 [xtdb.compactor-28] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/xt$txs/data/log-l01-fr00-nr4c870a-rs643.arrow - terminating put operation
+14:11:58.193 [xtdb.compactor-28] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/xt$txs/meta/log-l01-fr00-nr4c870a-rs643.arrow - terminating put operation
+14:12:14.674 [xtdb.compactor-31] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/xt$txs/data/log-l01-fr00-nr4e17d2-rs70b.arrow - terminating put operation
+14:12:14.687 [xtdb.compactor-31] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/xt$txs/meta/log-l01-fr00-nr4e17d2-rs70b.arrow - terminating put operation
+14:12:22.487 [xtdb.compactor-34] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/xt$txs/data/log-l01-fr00-nr4fa89a-rs7d3.arrow - terminating put operation
+14:12:22.501 [xtdb.compactor-34] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/xt$txs/meta/log-l01-fr00-nr4fa89a-rs7d3.arrow - terminating put operation
+14:12:42.018 [xtdb.compactor-37] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/xt$txs/data/log-l01-fr00-nr5113962-rs89b.arrow - terminating put operation
+14:12:42.028 [xtdb.compactor-37] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/xt$txs/meta/log-l01-fr00-nr5113962-rs89b.arrow - terminating put operation
+14:12:56.427 [main] INFO  xtdb.bench.auctionmark - finished submitting load stage
+14:12:56.427 [main] INFO  xtdb.bench.auctionmark - start awaiting load stage
+14:13:01.464 [xtdb.compactor-40] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/xt$txs/data/log-l01-fr00-nr512ca2a-rs963.arrow - terminating put operation
+14:13:01.478 [xtdb.compactor-40] INFO  xtdb.azure.object-store - Blob already exists for xtdb-object-store/v05/tables/xt$txs/meta/log-l01-fr00-nr512ca2a-rs963.arrow - terminating put operation
+14:13:01.629 [main] INFO  xtdb.bench.auctionmark - finished awaiting load stage
+{"stage":"load","time-taken-ms":173468,"bench-id":"31aa603c-df3e-4846-952d-dccb1f4b21dd","jvm-id":"root"}
+{"benchmark":"Auction Mark Load Phase","system":{"jre":"Temurin-21.0.5+11","java-opts":"-Dclojure.main.report=stderr -Dlogback.configurationFile=logback.xml -Xmx2000m -Xms2000m -XX:MaxDirectMemorySize=2000m -XX:MaxMetaspaceSize=500m --add-opens=java.base\/java.nio=ALL-UNNAMED -Dio.netty.tryReflectionSetAccessible=true","max-heap":"2000MB","arch":"amd64","os":"Ubuntu Noble Numbat 24.04.1 LTS","memory":"31GB","cpu":"Intel(R) Xeon(R) Platinum 8171M CPU @ 2.60GHz, 4 cores, 2.10GHZ max"},"time-taken-ms":173590,"bench-id":"31aa603c-df3e-4846-952d-dccb1f4b21dd","jvm-id":"root"}
+14:13:01.956 [main] INFO  xtdb.pgwire - Server stopped.
+14:13:01.963 [xtdb.compactor-38] INFO  xtdb.azure.object-store - Staging block interrupted for https://xtdbazurebenchmark.blob.core.windows.net/xtdbazurebenchmarkcontainer/xtdb-object-store%2Fv05%2Ftables%2Fpublic%24item%2Fdata%2Flog-l01-fr4c870a-nr5113962-rs4b000.arrow - aborting multipart operation
+14:13:01.964 [xtdb.compactor-38] INFO  xtdb.buffer-pool - Error caught in upload-multipart-buffers - aborting multipart upload of tables/public$item/data/log-l01-fr4c870a-nr5113962-rs4b000.arrow
