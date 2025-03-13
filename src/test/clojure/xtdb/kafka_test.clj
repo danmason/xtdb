@@ -89,3 +89,89 @@
                                                          :bootstrap-servers "nonresolvable:9092"
                                                          :create-topic? false
                                                          :some-secret "foobar"}]}))))
+
+(t/deftest ^:integration test-kafka-topic-cleared
+  (let [topic-1 (str "xtdb.kafka-test." (random-uuid))
+        topic-2 (str "xtdb.kafka-test." (random-uuid))]
+    (util/with-tmp-dirs #{local-disk-path}
+      ;; Node with storage and log topic 
+      (with-open [node (xtn/start-node {:log [:kafka {:topic topic-1
+                                                      :bootstrap-servers *bootstrap-servers*
+                                                      :create-topic? true
+                                                      :poll-duration "PT2S"
+                                                      :properties-map {}
+                                                      :properties-file nil}]
+                                        :storage [:local {:path local-disk-path}]})]
+        ;; Submit a few transactions
+        (xt/execute-tx node [[:put-docs :xt_docs {:xt/id :foo}]])
+        (xt/execute-tx node [[:put-docs :xt_docs {:xt/id :bar}]])
+        (xt/execute-tx node [[:put-docs :xt_docs {:xt/id :baz}]])
+        (t/is (= (set [{:xt/id :foo} {:xt/id :bar} {:xt/id :baz}])
+                 (set (xt/q node "SELECT _id FROM xt_docs"))))
+        ;; Finish the block
+        (t/is (nil? (tu/finish-block! node))))
+
+      ;; Node with intact storage and (now) empty topic
+      (t/is
+       (thrown-with-msg?
+        IllegalStateException
+        #"Log is empty, and last indexed transaction is 2."
+        (xtn/start-node {:log [:kafka {:topic topic-2
+                                       :bootstrap-servers *bootstrap-servers*
+                                       :create-topic? true
+                                       :poll-duration "PT2S"
+                                       :properties-map {}
+                                       :properties-file nil}]
+                         :storage [:local {:path local-disk-path}]})))
+
+      ;; Node with intact storage and topic 2 (ie, empty topic) along with setting log offset
+      (with-open [node (xtn/start-node {:log [:kafka {:topic topic-2
+                                                      :bootstrap-servers *bootstrap-servers*
+                                                      :create-topic? true
+                                                      :poll-duration "PT2S"
+                                                      :properties-map {}
+                                                      :properties-file nil
+                                                      :tx-id-offset 2}]
+                                        :storage [:local {:path local-disk-path}]})]
+        (t/testing "can query previous indexed values"
+          (t/is (= (set [{:xt/id :foo} {:xt/id :bar} {:xt/id :baz}])
+                   (set (xt/q node "SELECT _id FROM xt_docs")))))
+
+        (t/testing "can index/query new transactions"
+          (t/is (xt/execute-tx node [[:put-docs :xt_docs {:xt/id :new}]]))
+          (t/is (xt/execute-tx node [[:put-docs :xt_docs {:xt/id :new2}]])) 
+          (t/is (= (set [{:xt/id :foo}
+                         {:xt/id :bar}
+                         {:xt/id :baz}
+                         {:xt/id :new}
+                         {:xt/id :new2}])
+                   (set (xt/q node "SELECT _id FROM xt_docs")))))
+
+        (t/testing "can finish the block"
+          (t/is (nil? (tu/finish-block! node)))))
+
+      (with-open [node (xtn/start-node {:log [:kafka {:topic topic-2
+                                                      :bootstrap-servers *bootstrap-servers*
+                                                      :create-topic? true
+                                                      :poll-duration "PT2S"
+                                                      :properties-map {}
+                                                      :properties-file nil
+                                                      :tx-id-offset 2}]
+                                        :storage [:local {:path local-disk-path}]})]
+        (t/testing "can query all previously indexed values, including those after log clear"
+          (t/is (= (set [{:xt/id :foo} 
+                         {:xt/id :bar} 
+                         {:xt/id :baz} 
+                         {:xt/id :new} 
+                         {:xt/id :new2}])
+                   (set (xt/q node "SELECT _id FROM xt_docs")))))
+
+        (t/testing "can continue to index/query new transactions"
+          (t/is (xt/execute-tx node [[:put-docs :xt_docs {:xt/id :new3}]]))
+          (t/is (= (set [{:xt/id :foo}
+                         {:xt/id :bar}
+                         {:xt/id :baz}
+                         {:xt/id :new}
+                         {:xt/id :new2}
+                         {:xt/id :new3}])
+                   (set (xt/q node "SELECT _id FROM xt_docs")))))))))
