@@ -99,6 +99,8 @@ interface Log : AutoCloseable {
      * then it's the latest-submitted-offset of _this_ node.
      */
     val latestSubmittedOffset: LogOffset
+    
+    val txIdOffset: Long?
 
     fun validateOffsets(latestCompletedTx: TransactionKey?)
 

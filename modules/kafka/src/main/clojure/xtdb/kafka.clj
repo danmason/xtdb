@@ -10,10 +10,13 @@
   [^Xtdb$Config config _ {:keys [bootstrap-servers
                                  topic create-topic?
                                  poll-duration
-                                 properties-map properties-file]}]
+                                 properties-map 
+                                 properties-file
+                                 tx-id-offset]}]
   (doto config
     (.setLog (cond-> (KafkaLog/kafka bootstrap-servers topic)
                create-topic? (.autoCreateTopic create-topic?)
                poll-duration (.pollDuration (time/->duration poll-duration))
                properties-map (.propertiesMap properties-map)
-               properties-file (.propertiesFile (util/->path properties-file))))))
+               properties-file (.propertiesFile (util/->path properties-file))
+               tx-id-offset (.txIdOffset tx-id-offset)))))

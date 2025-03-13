@@ -98,6 +98,7 @@ class LocalLog(rootPath: Path, private val instantSource: InstantSource) : Log {
     }
 
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default)
+    override val txIdOffset = null
 
     internal data class NewMessage(
         val message: Message,

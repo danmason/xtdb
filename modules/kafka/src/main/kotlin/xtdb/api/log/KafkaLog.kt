@@ -110,8 +110,9 @@ class KafkaLog internal constructor(
     private val kafkaConfigMap: KafkaConfigMap,
     private val topic: String,
     private val pollDuration: Duration,
+    private var txIdOffsetInit: Long?
 ) : Log {
-
+    override val txIdOffset = txIdOffsetInit?.plus(1)
     private val producer = kafkaConfigMap.openProducer()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -123,11 +124,13 @@ class KafkaLog internal constructor(
     private fun readLatestSubmittedMessage(kafkaConfigMap: KafkaConfigMap): LogOffset =
         kafkaConfigMap.openConsumer().use { c ->
             val tp = TopicPartition(topic, 0)
-            (c.endOffsets(listOf(tp))[tp] ?: 0).toLong() - 1
+            val offset = (c.endOffsets(listOf(tp))[tp] ?: 0).toLong() - 1
+            offset + (txIdOffset ?: 0)
         }
 
     private val latestSubmittedOffset0 = AtomicLong(readLatestSubmittedMessage(kafkaConfigMap))
     override val latestSubmittedOffset get() = latestSubmittedOffset0.get()
+
     override fun validateOffsets(latestCompletedTx: TransactionKey?) {
         if (latestCompletedTx!=null && latestSubmittedOffset == -1L) {
             throw IllegalStateException("Log is empty, and last indexed transaction is ${latestCompletedTx.txId}.")
@@ -141,7 +144,8 @@ class KafkaLog internal constructor(
                     producer.send(
                         ProducerRecord(topic, null, Unit, message.encode()),
                         Callback { recordMetadata, e ->
-                            if (e == null) res.complete(recordMetadata.offset()) else res.completeExceptionally(e)
+                            var offset = recordMetadata.offset() + (txIdOffset ?: 0)
+                            if (e == null) res.complete(offset) else res.completeExceptionally(e)
                         }
                     )
                 }
@@ -152,9 +156,10 @@ class KafkaLog internal constructor(
     override fun subscribe(subscriber: Subscriber): Subscription {
         val job = scope.launch {
             kafkaConfigMap.openConsumer().use { c ->
+                val latestCompletedOffset = subscriber.latestCompletedOffset - (txIdOffset ?: 0)
                 TopicPartition(topic, 0).also { tp ->
                     c.assign(listOf(tp))
-                    c.seek(tp, subscriber.latestCompletedOffset + 1)
+                    c.seek(tp, latestCompletedOffset + 1)
                 }
 
                 runInterruptible(Dispatchers.IO) {
@@ -166,9 +171,9 @@ class KafkaLog internal constructor(
                         }
 
                         subscriber.processRecords(
-                            records.map { record ->
+                            records.map { record -> {}
                                 Record(
-                                    record.offset(),
+                                    record.offset() + (txIdOffset ?: 0),
                                     Instant.ofEpochMilli(record.timestamp()),
                                     Message.parse(ByteBuffer.wrap(record.value()))
                                 )
@@ -178,6 +183,8 @@ class KafkaLog internal constructor(
                 }
             }
         }
+
+        
 
         return Subscription { runBlocking { withTimeout(5.seconds) { job.cancelAndJoin() } } }
     }
@@ -231,7 +238,8 @@ class KafkaLog internal constructor(
         var autoCreateTopic: Boolean = true,
         var pollDuration: Duration = Duration.ofSeconds(1),
         var propertiesMap: Map<String, String> = emptyMap(),
-        var propertiesFile: Path? = null
+        var propertiesFile: Path? = null,
+        var txIdOffset: Long? = null
     ) : Log.Factory {
 
         fun autoCreateTopic(autoCreateTopic: Boolean) = apply { this.autoCreateTopic = autoCreateTopic }
@@ -240,6 +248,7 @@ class KafkaLog internal constructor(
 
         fun propertiesMap(propertiesMap: Map<String, String>) = apply { this.propertiesMap = propertiesMap }
         fun propertiesFile(propertiesFile: Path) = apply { this.propertiesFile = propertiesFile }
+        fun txIdOffset(txIdOffset: Long) = apply { this.txIdOffset = txIdOffset }
 
         private val Path.asPropertiesMap: Map<String, String>
             get() =
@@ -259,7 +268,7 @@ class KafkaLog internal constructor(
                 admin.ensureTopicExists(topic, autoCreateTopic)
             }
 
-            return KafkaLog(configMap, topic, pollDuration)
+            return KafkaLog(configMap, topic, pollDuration, txIdOffset)
         }
     }
 

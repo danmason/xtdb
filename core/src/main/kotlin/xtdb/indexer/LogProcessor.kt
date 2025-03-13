@@ -35,6 +35,7 @@ class LogProcessor(
         private val LOG = LogProcessor::class.logger
     }
 
+    private val txIdOffset = log.txIdOffset
     private val watchers = Watchers(liveIndex.latestCompletedTx?.txId ?: -1)
     private val LOGGER = LoggerFactory.getLogger(LogProcessor::class.java)
 

@@ -34,6 +34,7 @@ class InMemoryLog(private val instantSource: InstantSource) : Log {
 
     private val appendCh: Channel<NewMessage> = Channel(100)
     private val committedCh = MutableSharedFlow<Record>(extraBufferCapacity = 100)
+    override val txIdOffset = null
 
     @Volatile
     override var latestSubmittedOffset: LogOffset = -1
