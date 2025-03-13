@@ -29,6 +29,7 @@ import xtdb.DurationSerde
 import xtdb.api.PathWithEnvVarSerde
 import xtdb.api.StringMapWithEnvVarsSerde
 import xtdb.api.StringWithEnvVarSerde
+import xtdb.api.TransactionKey
 import xtdb.api.Xtdb
 import xtdb.api.log.Log.*
 import xtdb.api.module.XtdbModule
@@ -127,6 +128,11 @@ class KafkaLog internal constructor(
 
     private val latestSubmittedOffset0 = AtomicLong(readLatestSubmittedMessage(kafkaConfigMap))
     override val latestSubmittedOffset get() = latestSubmittedOffset0.get()
+    override fun validateOffsets(latestCompletedTx: TransactionKey?) {
+        if (latestCompletedTx!=null && latestSubmittedOffset == -1L) {
+            throw IllegalStateException("Log is empty, and last indexed transaction is ${latestCompletedTx.txId}.")
+        }
+    }
 
     override fun appendMessage(message: Message): CompletableFuture<LogOffset> =
         scope.future {

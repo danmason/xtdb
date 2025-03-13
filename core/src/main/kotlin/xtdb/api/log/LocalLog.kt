@@ -14,6 +14,7 @@ import kotlinx.serialization.Transient
 import kotlinx.serialization.UseSerializers
 import xtdb.DurationSerde
 import xtdb.api.PathWithEnvVarSerde
+import xtdb.api.TransactionKey
 import xtdb.api.log.Log.*
 import xtdb.time.InstantUtil.asMicros
 import xtdb.time.InstantUtil.fromMicros
@@ -151,6 +152,11 @@ class LocalLog(rootPath: Path, private val instantSource: InstantSource) : Log {
     override var latestSubmittedOffset: LogOffset = readLatestSubmittedOffset(rootPath)
         private set
 
+    override fun validateOffsets(latestCompletedTx: TransactionKey?) {
+        if (latestCompletedTx!=null && latestSubmittedOffset == -1L) {
+            throw IllegalStateException("Log is empty, and last indexed transaction is ${latestCompletedTx.txId}.")
+        }
+    }
     @Volatile
     private var committedCh = MutableSharedFlow<Record>(extraBufferCapacity = 100)
 

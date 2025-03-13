@@ -21,6 +21,7 @@
            (xtdb.api.log Log Log$Factory Log$Message$Tx)
            (xtdb.api.tx TxOp$Sql)
            (xtdb.arrow Relation Vector VectorWriter)
+           xtdb.catalog.BlockCatalog
            xtdb.indexer.LogProcessor
            (xtdb.tx_ops Abort AssertExists AssertNotExists Call Delete DeleteDocs Erase EraseDocs Insert PatchDocs PutDocs SqlByteArgs Update XtqlAndArgs)
            xtdb.types.ClojureForm))
@@ -307,8 +308,16 @@
                        :kafka :xtdb.kafka/log)
                      opts))
 
-(defmethod ig/init-key :xtdb/log [_ ^Log$Factory factory]
-  (.openLog factory))
+(defmethod ig/prep-key :xtdb/log [_ factory]
+  {:block-cat (ig/ref :xtdb/block-catalog)
+   :factory factory})
+
+(defmethod ig/init-key :xtdb/log [_ {:keys [^BlockCatalog block-cat ^Log$Factory factory]}]
+  (let [log (.openLog factory)]
+    ;; Run validations against the completedTx vs the submitted-tx-id
+    (.validateOffsets log (.getLatestCompletedTx block-cat))
+    ;; Return the log
+    log))
 
 (defmethod ig/halt-key! :xtdb/log [_ ^Log log]
   (util/close log))

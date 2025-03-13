@@ -7,6 +7,7 @@ import kotlinx.coroutines.future.future
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
+import xtdb.api.TransactionKey
 import xtdb.api.log.Log.*
 import java.time.Instant
 import java.time.InstantSource
@@ -37,6 +38,12 @@ class InMemoryLog(private val instantSource: InstantSource) : Log {
     @Volatile
     override var latestSubmittedOffset: LogOffset = -1
         private set
+
+    override fun validateOffsets(latestCompletedTx: TransactionKey?) {
+        if (latestCompletedTx!=null && latestSubmittedOffset == -1L) {
+            throw IllegalStateException("Using persistent storage and an in memory log - last indexed transaction is ${latestCompletedTx.txId}.")
+        }
+    }
 
     init {
         scope.launch {

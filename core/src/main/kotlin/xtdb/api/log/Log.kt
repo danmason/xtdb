@@ -5,6 +5,7 @@ package xtdb.api.log
 import kotlinx.serialization.UseSerializers
 import xtdb.DurationSerde
 import xtdb.api.PathWithEnvVarSerde
+import xtdb.api.TransactionKey
 import xtdb.log.proto.*
 import xtdb.log.proto.LogMessage.MessageCase
 import java.nio.ByteBuffer
@@ -98,6 +99,8 @@ interface Log : AutoCloseable {
      * then it's the latest-submitted-offset of _this_ node.
      */
     val latestSubmittedOffset: LogOffset
+
+    fun validateOffsets(latestCompletedTx: TransactionKey?)
 
     fun appendMessage(message: Message): CompletableFuture<LogOffset>
 
