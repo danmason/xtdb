@@ -1,0 +1,27 @@
+= Migrating indexes of XTDB 
+
+When you wish to upgrade to a new XTDB version, you may need to migrate the indexes. In this case, we provide the ability to run a migration Job within the cluster that will migrate the indexes, after which point you can doing a normal rolling upgrade of the XTDB nodes.
+
+To migrate the indexes, run the following, setting the `migrateIndexFrom` value to the version you are migrating from:
+
+```bash
+helm upgrade --reuse-values xtdb-azure oci://ghcr.io/xtdb/helm-xtdb-azure \
+  --version 2.0.0-snapshot \
+  --set migrationJob.enabled=true \
+  --set migrationJob.migrateIndexFrom=<version>
+```
+
+After releasing the migration Job, you can monitor its progress by running:
+
+```bash
+kubectl logs jobs/xtdb-index-migration -n <deployment-namespace>
+```
+
+Once the job has completed, you can run the rolling upgrade of the XTDB nodes, setting the version:
+
+```bash
+helm upgrade --reuse-values xtdb-azure oci://ghcr.io/xtdb/helm-xtdb-azure \
+  --version 2.0.0-snapshot \
+  --set migrationJob.enabled=false \
+  --set image.tag=<version>
+```

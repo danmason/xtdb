@@ -1,5 +1,11 @@
 nodeCount: 3
 
+# Enabling this WILL run a job to migrate the index from a previous version of XTDB.
+# Ensure that you wish to do this before setting this value.
+migrationJob:
+  enabled: false
+  migrateIndexFrom: # <indexVersion>
+
 image:
   repository: ghcr.io/xtdb/xtdb-azure
   # tag: 2.0.0-beta5

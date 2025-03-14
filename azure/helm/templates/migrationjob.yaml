@@ -1,0 +1,66 @@
+{{- if .Values.migrationJob.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: xtdb-index-migration
+spec:
+  ttlSecondsAfterFinished: 600  # Automatically deletes job 10 minutes after completion
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ required (printf "xtdbConfig.serviceAccount is required - ensure you set it up on %s and link to an IAM role using IAM Roles for Service Accounts (IRSA)" .Release.Namespace) .Values.xtdbConfig.serviceAccount }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      tolerations:
+        {{- toYaml .Values.tolerations | nindent 8 }}
+      affinity:
+        {{- toYaml .Values.affinity | nindent 8 }}
+      volumes: 
+        - name: "tmp"
+          emptyDir: {}
+        - name: xtdb-yaml-config
+          configMap:
+            name: xtdb-yaml-config
+        - name: "local-disk-cache"
+          emptyDir:
+            sizeLimit: {{ .Values.xtdbConfig.localDiskCache.sizeLimit }}
+      containers:
+        - name: xtdb-container
+          image: {{ .Values.image.repository }}:{{ default .Chart.AppVersion .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: 
+            - '-f'
+            - '/var/lib/xtdb-config/xtdbconfig.yaml'
+            - '--migrate-from'
+            - "{{ required "migrationJob.migrateIndexFrom is required. Please specify the index version to migrate from." .Values.migrationJob.migrateIndexFrom }}"
+          volumeMounts:
+            - name: "tmp"
+              mountPath: "/tmp"
+            - mountPath: /var/lib/xtdb-config/xtdbconfig.yaml
+              name: xtdb-yaml-config
+              subPath: xtdbconfig.yaml
+            - name: local-disk-cache
+              mountPath: "/var/lib/xtdb/buffers/"
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          env:
+            - name: JDK_JAVA_OPTIONS
+              value: {{ .Values.xtdbConfig.jdkOptions }}
+            - name: XTDB_NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: {{ required "xtdbConfig.kafkaBootstrapServers is required." .Values.xtdbConfig.kafkaBootstrapServers }}
+            - name: KAFKA_LOG_TOPIC
+              value: {{ required "xtdbConfig.kafkaLogTopic is required." .Values.xtdbConfig.kafkaLogTopic }}
+            - name: AZURE_STORAGE_ACCOUNT
+              value: {{ required "xtdbConfig.storageAccountName is required." .Values.xtdbConfig.storageAccountName }}
+            - name: AZURE_STORAGE_CONTAINER
+              value: {{ required "xtdbConfig.storageContainerName is required." .Values.xtdbConfig.storageContainerName }}
+            - name: AZURE_USER_MANAGED_IDENTITY_CLIENT_ID
+              value: {{ required "xtdbConfig.userManagedIdentityClientId is required." .Values.xtdbConfig.userManagedIdentityClientId }}
+            {{- range $key, $value := .Values.xtdbConfig.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+{{- end }}
