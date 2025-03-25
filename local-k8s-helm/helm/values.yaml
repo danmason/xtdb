@@ -1,0 +1,81 @@
+nodeCount: 2
+
+migrationJob:
+  enabled: false
+
+image:
+  repository: ghcr.io/xtdb/xtdb-aws
+  tag: 2.0.0-beta6.4
+  pullPolicy: IfNotPresent
+
+xtdbConfig:
+  # We mount and use the below YAML for configuring the XTDB nodes and their modules.
+  # The !Env values are set by Environment Variables set on the XTDB statefulset pods.
+  # See the XTDB configuration documentation for options: https://docs.xtdb.com/ops/config.html
+  nodeConfig: |-
+    server:
+      port: 5432
+
+    log: !Kafka
+      bootstrapServers: kafka.xtdb-deployment.svc.cluster.local:9092
+      topic: xtdb-log
+
+    storage: !Local
+      path: "/var/lib/xtdb/bufferpool"
+
+    healthz:
+      port: 8080
+
+    modules:
+    - !HttpServer
+      port: 3000 
+
+  # To use remote/minio storage - currently using local storage due to multipart issues with minio on beta6.
+  # storage: !Remote
+  #       objectStore: !S3
+  #         bucket: xtdb
+  #         prefix: xtdb-objects
+  #         pathStyleAccessEnabled: true
+  #         endpoint: http://minio.xtdb-deployment.svc.cluster.local:9000
+  #         region: aws-iso-global
+  #         credentials:
+  #           accessKey: "minioadmin"
+  #           secretKey: "minioadmin"
+  #       localDiskCache: /var/lib/xtdb/buffers/disk-cache
+
+  # Volume size settings for XTDB Local Disk Cache (uses ephemeral storage)
+  localDiskCache:
+    sizeLimit: "50Gi"
+
+  # Extra Env:
+  env:
+    # (ENV_VAR_NAME: Value)
+    XTDB_LOGGING_LEVEL: "debug" # See https://docs.xtdb.com/ops/troubleshooting/overview.html
+
+resources:
+  limits:
+    cpu: "1000m"
+    memory: "4G"
+    ephemeral-storage: 50Gi
+  requests:
+    cpu: "750m"
+    memory: "4G"
+    ephemeral-storage: 50Gi
+
+xtdbService:
+  type: LoadBalancer
+  server:
+    # Port of the Postgres Wire Server on the nodes
+    targetPort: 5432
+    # Port exposed by the service
+    servicePort: 5432
+  httpServer:
+    # Port of the http server on the nodes
+    targetPort: 3000
+    # Port exposed by the service
+    servicePort: 3000
+  healthzServer:
+    # Port of the healthz server on the nodes
+    targetPort: 8080
+    # Port exposed by the service
+    servicePort: 8080

@@ -1,0 +1,45 @@
+Thank you for installing the XTDB Helm Chart!
+
+Your XTDB cluster is now running on Minikube.
+
+To access XTDB services:
+
+---
+
+Service Info
+
+The XTDB service is exposed as a NodePort service.
+
+You can retrieve the access URL for the HTTP server using:
+
+  minikube service xtdb-service --url
+
+Or to forward ports manually:
+
+  kubectl port-forward svc/xtdb-service {{ .Values.xtdbService.httpServer.servicePort }}:{{ .Values.xtdbService.httpServer.targetPort }}   # HTTP Server
+  kubectl port-forward svc/xtdb-service {{ .Values.xtdbService.server.servicePort }}:{{ .Values.xtdbService.server.targetPort }}   # Postgres Wire Server
+  kubectl port-forward svc/xtdb-service {{ .Values.xtdbService.healthzServer.servicePort }}:{{ .Values.xtdbService.healthzServer.targetPort }}   # Healthz
+
+---
+
+MinIO Access
+
+XTDB is configured to use MinIO (an S3-compatible object store) deployed locally.
+
+To access the MinIO dashboard:
+
+  kubectl port-forward svc/minio 9001:9001
+
+Then open:
+
+  http://localhost:9001
+
+Login credentials:
+
+  Access Key: minio
+  Secret Key: minio
+
+Further Documentation
+
+XTDB configuration reference:
+https://docs.xtdb.com/ops/config.html

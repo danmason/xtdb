@@ -1,0 +1,54 @@
+{{ if .Values.migrationJob.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: xtdb-migration-job
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: xtdb-migration-container
+          image: {{ .Values.image.repository }}:edge
+          imagePullPolicy: Always
+          args:
+            [
+              '-f',
+              '/var/lib/xtdb-config/xtdbconfig.yaml',
+              '--migrate-from',
+              '5'
+            ]
+          volumeMounts:
+            - name: "tmp"
+              mountPath: "/tmp"
+            - mountPath: /var/lib/xtdb-config/xtdbconfig.yaml
+              name: xtdb-yaml-config
+              subPath: xtdbconfig.yaml
+            - name: local-disk-cache
+              mountPath: "/var/lib/xtdb/buffers/"
+            - name: local-disk-bp
+              mountPath: "/var/lib/xtdb/bufferpool/"
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          env:
+            - name: XTDB_NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            {{- range $key, $value := .Values.xtdbConfig.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+      volumes: 
+        - name: "tmp"
+          emptyDir: {}
+        - name: xtdb-yaml-config
+          configMap:
+            name: xtdb-yaml-config
+        - name: "local-disk-cache"
+          emptyDir:
+            sizeLimit: {{ .Values.xtdbConfig.localDiskCache.sizeLimit }}
+        - name: "local-disk-bp"
+          persistentVolumeClaim:
+            claimName: xtdb-buffer-pool-claim
+{{ end }}

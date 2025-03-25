@@ -1,0 +1,25 @@
+# We use this for the local bufferpool based storage
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: xtdb-buffer-pool
+spec:
+  storageClassName: manual
+  accessModes:
+    - ReadWriteOnce
+  capacity:
+    storage: 15Gi
+  hostPath:
+    path: /data/xtdb-buffer-pool/
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: xtdb-buffer-pool-claim
+spec:
+  storageClassName: manual
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: helm-xtdb-minikibe-minio
+description: A Helm chart for setting up a simple XTDB cluster on minikube
+type: application
+version: 0.1.0
+appVersion: "edge"
