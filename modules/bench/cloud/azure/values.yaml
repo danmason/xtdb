@@ -1,0 +1,9 @@
+providerConfig:
+  configFile: "config/azure.yaml"
+  env:
+    XTDB_AZURE_STORAGE_ACCOUNT: "xtdbazurebenchmark"
+    XTDB_AZURE_STORAGE_CONTAINER: "xtdbazurebenchmarkcontainer"
+    XTDB_AZURE_USER_MANAGED_IDENTITY_CLIENT_ID: "<user_assigned_managed_identity_client_id>"
+  podLabels: {}
+  serviceAccountAnnotations:
+    azure.workload.identity/client-id: "<user_assigned_managed_identity_client_id>"

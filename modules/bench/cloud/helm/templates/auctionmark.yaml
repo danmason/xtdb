@@ -1,0 +1,102 @@
+# Load Phase Job (pre-install/pre-upgrade hook)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: auctionmark-load-phase
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        {{- toYaml .Values.providerConfig.podLabels | nindent 8 }}
+    spec:
+      nodeSelector:
+        nodepool: xtdbpool
+      serviceAccountName: xtdb-service-account
+      restartPolicy: Never
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: local-disk-cache
+          emptyDir:
+            sizeLimit: {{ .Values.xtdbConfig.localDiskCache.sizeLimit }}
+      containers:
+        - name: load-phase
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: local-disk-cache
+              mountPath: /var/lib/xtdb/buffers/
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: xtdb-env-config
+          env:
+            - name: XTDB_NODE_ID
+              value: "bench-load-phase"
+          args:
+            - {{ .Values.providerConfig.configFile | quote }}
+            - --only-load
+            - --scale-factor
+            - {{ .Values.auctionmark.scaleFactor | quote }}
+          ports:
+            - name: metrics
+              containerPort: 8080
+---
+# Cluster Node Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: auctionmark-cluster-nodes
+  namespace: {{ .Release.Namespace }}
+spec:
+  parallelism: 3
+  completions: 3
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- toYaml .Values.providerConfig.podLabels | nindent 8 }}
+    spec:
+      nodeSelector:
+        node_pool: xtdbpool
+      serviceAccountName: xtdb-service-account
+      restartPolicy: Never
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: local-disk-cache
+          emptyDir:
+            sizeLimit: {{ .Values.xtdbConfig.localDiskCache.sizeLimit }}
+      containers:
+        - name: xtdb-node
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: local-disk-cache
+              mountPath: /var/lib/xtdb/buffers/
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: xtdb-env-config
+          env:
+            - name: XTDB_NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          args:
+            - {{ .Values.providerConfig.configFile | quote }}
+            - --duration
+            - {{ .Values.auctionmark.duration | quote }}
+          ports:
+            - name: metrics
+              containerPort: 8080

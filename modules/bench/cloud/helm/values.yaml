@@ -1,0 +1,55 @@
+benchType: Auctionmark
+  
+auctionmark:
+  loadPhase: true
+  scaleFactor: 0.1
+  duration: "PT24H"
+
+xtdbConfig: 
+  # Core environment variables
+  kafkaBootstrapServers: kafka-controller-0.kafka-controller-headless.cloud-benchmark.svc.cluster.local:9092,kafka-controller-1.kafka-controller-headless.cloud-benchmark.svc.cluster.local:9092,kafka-controller-2.kafka-controller-headless.cloud-benchmark.svc.cluster.local:9092
+  logTopic: xtdb-log
+  jdkOptions: "-Xmx3000m -Xms3000m -XX:MaxDirectMemorySize=3000m -XX:MaxMetaspaceSize=500m"
+  loggingLevel: info
+  localDiskCache:
+    sizeLimit: "180Gi"
+
+providerConfig:
+  # Set by cloud provider override
+  configFile: ""
+  env: {}
+  podLabels: {}
+  serviceAccountAnnotations: {}
+  
+image:
+  repository: ghcr.io/xtdb/xtdb-bench
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: "nightly"
+
+resources:
+  limits:
+    cpu: "2000m"
+    memory: "10G"
+    ephemeral-storage: 200Gi
+  requests:
+    cpu: "1750m"
+    memory: "10G"
+    ephemeral-storage: 200Gi
+
+# For our bitnami/kafka deployment
+kafka:
+  listeners:
+    client:
+      protocol: PLAINTEXT
+    controller:
+      protocol: PLAINTEXT
+  controller:
+    resourcesPreset: medium
+    nodeSelector:
+      node_pool: xtdbpool
+    persistentVolumeClaimRetentionPolicy:
+      whenDeleted: Delete
+    controller:
+      persistence:
+        size: 50Gi

@@ -1,0 +1,6 @@
+dependencies:
+- name: kafka
+  repository: oci://registry-1.docker.io/bitnamicharts
+  version: 31.3.1
+digest: sha256:b0236683b9e7a0e7b17520d05e30830d31e3ec39e6c2505c55f0e6582f43d65a
+generated: "2025-05-19T15:34:12.518568272+01:00"
