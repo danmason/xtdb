@@ -106,3 +106,99 @@ If the metrics are not exposed under `localhost:8080` you need to tweak the `.co
 Under `localhost:3001` you are able to access the Grafana UI (`admin` for user and password).
 The XTDB node datasource should be setup, and there should be a dashboard available with some basic metrics.
 If you tweak the dashboard or add a new one, save the changes in the corresponding file in `.config/dashboards/dashboard_name.json`.
+
+== Running the benchmarks on the Cloud
+
+=== Prerequisites
+
+* AWS/Azure/GCP CLI
+* Terraform
+* Helm 3.0+
+
+=== Authentication
+
+Prior to running the benchmarks on the cloud, you need to set up your cloud provider credentials:
+
+AWS::
+[source,bash]
+----
+# Setup a profile named "xtdb-bench"
+aws configure sso
+# Logon to your profile:
+aws sso login --profile xtdb-bench
+----
+
+Azure::
+[source,bash]
+----
+# Login to Azure 
+az login --scope https://management.azure.com//.default
+# Set the subscription
+az account set --subscription "XTDB long-run reliability"
+----
+
+Google Cloud::
+[source,bash]
+----
+# Login to GCP
+gcloud auth login
+# Set the project
+gcloud config set project xtdb-scratch
+----
+
+=== Setup the Infra
+
+We can setup the cloud infra using the "setup-infra.sh" script:
+
+[source,bash]
+----
+./cloud/setup-infra.sh <aws|azure|google-cloud> 
+----
+
+This will create the necessary resources for running the benchmarks on the cloud, and log you into the created Kubernetes cluster.
+
+=== Run a benchmark
+
+You can run a benchmark on the cloud using the "run-bench.sh" script:
+[source,bash]
+----
+./cloud/run-bench.sh <aws|azure|google-cloud> <benchmark-type> <opts...>
+----
+
+TPC-H::
+[source,bash]
+----
+./cloud/run-bench.sh azure tpch --scale-factor 0.01
+----
+Readings::
+[source,bash]
+----
+./cloud/run-bench.sh azure readings --devices 10000 --readings 10000
+----
+
+At the beginning of each run, we clear the contents of the cloud's storage bucket and the previous helm release of the benchmark/kafka to fully clear the data. To prevent this behavior, you can pass the `--no-cleanup` flag to the script.
+
+==== Running Auctionmark
+
+Typically, we run Auctionmark in two stages - an initial load-phase and then an OLTP phase running with multiple nodes/pods. To run using run-bench:
+
+Load Phase::
+[source,bash]
+----
+./cloud/run-bench.sh azure auctionmark --scale-factor 0.1 --onlyLoad true
+----
+
+OLTP Phase::
+[source,bash]
+----
+./cloud/run-bench.sh azure auctionmark --threads 8 --duration PT10M --no-cleanup
+----
+
+=== Cleaup the Infra
+
+To fully clearup the storage, helm deployments and infrastructure on the cloud, you can run the "delete-infra.sh" script:
+
+[source,bash]
+----
+./cloud/delete-infra.sh <aws|azure|google-cloud>
+----
