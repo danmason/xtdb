@@ -26,10 +26,11 @@
            (java.util LinkedList List)
            (java.util.function IntConsumer)
            (java.util.stream IntStream)
-           (org.apache.arrow.memory BufferAllocator RootAllocator)
+           (org.apache.arrow.memory BufferAllocator RootAllocator) 
            (org.apache.arrow.vector FieldVector VectorSchemaRoot)
            (org.apache.arrow.vector.types.pojo Field Schema)
-           (xtdb BufferPool ICursor)
+           (org.testcontainers.containers GenericContainer)
+           (xtdb BufferPool ICursor) 
            (xtdb.api TransactionKey)
            (xtdb.api.log Log$Message$FlushBlock)
            xtdb.api.query.IKeyFn
@@ -384,3 +385,12 @@
    (let [^PreparedQuery prepared-q (xtp/prepare-sql node query (merge {:default-db "xtdb"} opts))]
      {:res (xt/q node query opts)
       :res-type (mapv (juxt #(.getName ^Field %) types/field->col-type) (.getColumnFields prepared-q []))})))
+
+(defn with-container [^GenericContainer c, f]
+  (if (.getContainerId c)
+    (f c)
+    (try
+      (.start c)
+      (f c)
+      (finally
+        (.stop c)))))

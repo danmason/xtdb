@@ -159,6 +159,12 @@
 (defn- err-invalid-passwd [msg] (ex-info msg {::severity :error, ::error-code "28P01"}))
 (defn- err-query-cancelled [msg] (ex-info msg {::severity :error, :error-code "57014"}))
 
+(defn- notice [msg]
+  {:severity "NOTICE"
+   :localized-severity "NOTICE"
+   :sql-state "00000"
+   :message msg})
+
 (defn- notice-warning [msg]
   {:severity "WARNING"
    :localized-severity "WARNING"
@@ -195,7 +201,7 @@
   ;;https://www.postgresql.org/docs/current/config-setting.html#CONFIG-SETTING-NAMES-VALUES
   ;;parameter names are case insensitive, choosing to lossily downcase them for now and store a mapping to a display format
   ;;for any name not typically displayed in lower case.
-  (swap! (:conn-state conn) update-in [:session :parameters] (fnil into {}) (parse-session-params {parameter value}))
+  (swap! (:conn-state conn) update-in [:session :parameters] assoc parameter value)
   (let [param (get pg-param-nf->display-format parameter parameter)]
     (pgio/cmd-write-msg conn pgio/msg-parameter-status {:parameter param,
                                                         :value (case param
@@ -314,7 +320,7 @@
 
       #xt.authn/method :password
       (do
-        ;; asking for a password, we only have :trust and :password for now
+        ;; asking for a password
         (pgio/cmd-write-msg conn pgio/msg-auth {:result 3})
 
         ;; we go idle until we receive a message
@@ -322,12 +328,40 @@
           (if (not= :msg-password msg-name)
             (throw (err-invalid-auth-spec (str "password authentication failed for user: " user)))
 
-            (if (.verifyPassword authn user (:password msg))
+            (if-let [user (.verifyPassword authn user (:password msg))]
               (do
                 (pgio/cmd-write-msg conn pgio/msg-auth {:result 0})
-                (startup-ok conn startup-opts))
-
+                (startup-ok conn (assoc startup-opts "user" user)))
               (throw (err-invalid-passwd (str "password authentication failed for user: " user)))))))
+      
+      #xt.authn/method :device-auth
+      (let [device-auth-resp (.startDeviceAuth authn user)]
+        (pgio/cmd-write-msg conn pgio/msg-auth {:result 0})
+        (pgio/cmd-send-notice conn (notice (str "\nHello! Please head over here to authenticate:"
+                                                (str "\n\n" (.getUrl device-auth-resp))
+                                                "\n")))
+        (if-let [user (.await device-auth-resp)]
+          (startup-ok conn (assoc startup-opts "user" user))
+          (throw (err-invalid-passwd "device authentication failed"))))
+
+      #xt.authn/method :client-credentials
+      (do
+        ;; asking for client-id/client-secret
+        (pgio/cmd-write-msg conn pgio/msg-auth {:result 3})
+      
+        ;; we go idle until we receive a message
+        (when-let [{:keys [msg-name] :as msg} (pgio/read-client-msg! frontend)]
+          (if (not= :msg-password msg-name)
+            (throw (err-invalid-auth-spec (str "client credentials authentication failed for user: " user)))
+      
+            (try
+              (if-let [user (.verifyClientCredentials authn user (:password msg))]
+                (do
+                  (pgio/cmd-write-msg conn pgio/msg-auth {:result 0})
+                  (startup-ok conn (assoc startup-opts "user" user)))
+                (throw (err-invalid-passwd (str "client credentials authentication failed for user: " user))))
+              (catch IllegalArgumentException e
+                (throw (err-invalid-passwd (str "client credentials error: " (.getMessage e)))))))))
 
       (throw (err-invalid-auth-spec (str "no authentication record found for user: " user))))
 
@@ -369,7 +403,7 @@
                     (cmd-startup-cancel msg-in))
 
           :30 (-> conn
-                  (cmd-startup-pg30 (read-startup-opts msg-in)))
+                  (cmd-startup-pg30 (parse-session-params (read-startup-opts msg-in))))
 
           (throw (pgio/err-protocol-violation "Unknown protocol version")))))
 
