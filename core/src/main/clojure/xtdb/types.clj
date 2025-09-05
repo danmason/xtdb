@@ -359,7 +359,7 @@
                               (into {:nullable? (or nullable? (.isNullable field))}
                                     (condp = (class arrow-type)
                                       ArrowType$List {:el (merge-field* (:el type-opts) (first (.getChildren field)))}
-                                      SetType {:el (merge-field* (:el type-opts) (first (.getChildren field)))}
+                                      SetType {:el (merge-field* (:el type-opts) (or (first (.getChildren field)) null-field))}
                                       ArrowType$FixedSizeList {:el (merge-field* (:el type-opts) (first (.getChildren field)))}
                                       ArrowType$Struct {:fields (let [default-field-mapping (if type-opts {#xt.arrow/type :null {:nullable? true}} nil)
                                                                       children (.getChildren field)]
