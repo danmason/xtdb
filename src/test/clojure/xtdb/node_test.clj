@@ -1196,3 +1196,8 @@ VALUES(1, OBJECT (foo: OBJECT(bibble: true), bar: OBJECT(baz: 1001)))"]])
 
   (t/is (= [{:xt/id 1, :a 3} {:xt/id 2} {:xt/id 3, :a 4} {:xt/id 4, :a "hello"}]
            (xt/q tu/*node* "SELECT * FROM docs ORDER BY _id"))))
+
+(t/deftest test-merge-fields-npe-4721
+  (xt/execute-tx tu/*node* [[:put-docs :docs {:h {:b #{}} :xt/id 1}]])
+  (xt/execute-tx tu/*node* [[:put-docs :docs {:h {}, :xt/id 1} {:xt/id 1}]])
+  (t/is (= [{:xt/id 1}] (xt/q tu/*node* "SELECT * FROM docs"))))
