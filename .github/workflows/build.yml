@@ -187,3 +187,58 @@ jobs:
   #   permissions:
   #     contents: read
   #     checks: write
+
+  docker-standalone-test:
+    name: Docker Standalone Test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up JDK 21
+        uses: actions/setup-java@v3
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build XTDB shadowJar
+        run: ./gradlew :docker:standalone:shadowJar
+
+      - name: Build Docker image
+        run: |
+          cd docker/standalone
+          docker build -t xtdb-standalone-test:${{ github.sha }} . 
+
+      - name: Run container
+        run: |
+          docker run -d --name xtdb-test -p 8080:8080 xtdb-standalone-test:${{ github.sha }}
+
+      - name: Wait for health endpoint
+        run: |
+          echo "Waiting for XTDB service to become ready..."
+          timeout 30 bash -c 'until curl -fs http://localhost:8080/healthz/alive; do sleep 2; done'
+
+      - name: Fetch logs
+        if: always()
+        run: |
+          echo "Final container logs:"
+          docker logs xtdb-test || true
+
+      - name: Clean up
+        if: always()
+        run: |
+          docker stop xtdb-test || true
+          docker rm xtdb-test || true
+
+      - name: Post Slack Notification (On Fail)
+        if: failure() && github.repository == 'xtdb/xtdb' && github.ref == 'refs/heads/main'
+        uses: ravsamhq/notify-slack-action@v2
+        with:
+          status: ${{ job.status }}
+          notification_title: "*{workflow}* has {status_message}:"
+          message_format: "{emoji} `docker-standalone-test` job has {status_message} in *{workflow}*"
+          notify_when: "failure"
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
