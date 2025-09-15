@@ -55,6 +55,12 @@
                                  :host "*"}
                        :flight-sql-server {:port 52358}}}})
 
+
+(def debug-config
+  {::xtdb {:node-opts {:server {:port 5432
+                                :host "*"}
+                       :healthz {:port 8080
+                                 :host "*"}}}})
 (comment
   (do
     (halt)
@@ -70,8 +76,9 @@
 (defmethod i/halt-key! ::playground [_ srv]
   (util/close srv))
 
-(ir/set-prep! (fn [] playground-config))
-(ir/set-prep! (fn [] standalone-config))
+;; (ir/set-prep! (fn [] playground-config))
+;; (ir/set-prep! (fn [] standalone-config))
+(ir/set-prep! (fn [] debug-config))
 
 #_{:clj-kondo/ignore [:clojure-lsp/unused-public-var]}
 (def go ir/go)
