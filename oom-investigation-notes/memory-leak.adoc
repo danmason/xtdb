@@ -110,3 +110,112 @@ LOG_FILE="$LOG_DIR/nmt-$(date +%Y%m%d-%H%M%S).log"
 ```
 
 I can also periodically run `jcmd <pid> VM.native_memory summary` to get a snapshot of the NMT stats at various point in time, so future runs will include that too.
+
+== Thoughts from the above
+
+I haven't particularly seen much direct evidence of a "leak" on cancelled queries as of the above - I am not entirely sure what the 4.2MB "jumps" in ambient netty usage are, but it is possible that this may relate to netty's own state management when handling data. 
+
+I can say with relative confidence that it doesn't appear that EVERY cancelled/killed query leaves behind some state in netty, as I would expect to see a more consistent increase in the ambient netty memory usage if that were the case.
+
+Given the correlation of "cancelled" error logs with memory spikes in netty as we have previously observed, it is still possible that there is some leaking going on here, though the exact conditions to trigger it are still unclear. 
+
+Some potential areas of investigation:
+
+* It may be that the leak only occurs when there are multiple simultaneous queries - perhaps multiple queries being cancelled at the same time on the same connection.
+* Perhaps a leak occurs on an interrupt/cancellation during another error - ie, OutOfMemoryExceptions?
+* It may be that a more complex/different query is required to trigger this - ie, the leak is only triggered in certain query plans,
+** Some potential areas of interest there - other types of JOINs, GROUP BY, MATERIALIZED.
+* The query may need to be cancelled at a particularly specific point in time - not unlike our previous memory leaks when an error occured when copying in direct memory.
+
+In addition, I want to simplify my setup a bit:
+
+* Would prefer to have the memory node setup & querying in the same file so I can run and test various things around connections from the REPL - this is currently a bit clunky with the psql connection, and it's hard to cancel things at specific points in time.
+** Can look at pgwire_test for examples of pgwire usage.
+
+== New test namespace
+
+Rather than using dev.clj and pgwire, my new file ran at the REPL consists of the following:
+
+```clojure
+(ns memory-leak-investigation
+  (:require [next.jdbc :as jdbc]
+            [xtdb.node :as xtn])
+  (:import [java.sql Connection]))
+
+(def large-query
+  "SELECT * FROM GENERATE_SERIES(1, 10000000) AS l(n) 
+   LEFT JOIN GENERATE_SERIES(1, 10000000) 
+   AS r(m) ON n = m 
+   ORDER BY n
+   LIMIT 100;")
+
+(defn ->node []
+  (xtn/start-node {:server {:port 5432
+                            :host "*"}
+                   :healthz {:port 8080
+                             :host "*"}}))
+
+(defn run-query [node]
+  (let [connection-builder (.createConnectionBuilder node)]
+    (with-open [^Connection conn (.build connection-builder)]
+      (let [result (jdbc/execute! conn [large-query])]
+        (println "First ten results of Query:" (take 10 result))))))
+
+(defn run-and-cancel-query
+  ([node] (run-and-cancel-query node 100))
+  ([node sleep-ms]
+   (let [connection-builder (.createConnectionBuilder node)]
+     (with-open [^Connection conn (.build connection-builder)]
+       (let [stmt (.createStatement conn)]
+         (future
+           (Thread/sleep sleep-ms)
+           (.cancel stmt))
+         (try
+           (.executeQuery stmt large-query)
+           (catch Exception e
+             (println "Query was cancelled:" (.getMessage e)))))))))
+
+(comment
+
+  (def node (->node))
+
+  (run-query node)
+  
+  (run-and-cancel-query node)
+
+  (run-and-cancel-query node 1000)
+  
+  ;; when done/resetting
+  
+  (.close node)
+  )
+```
+
+For the sake of comparison, I am using the same query as before - though can and will modify this query over time to see if I can trigger different behaviour / memory usage patterns.
+
+== The 4MB Increments
+
+Starting the node, I do a number of normal runs of the query, and see the following netty memory usage pattern:
+
+image::clojure-normal-runs.png[]
+
+Notes on this: 
+
+* This graph shows the same query ran around 40 times in succession.
+  * (This was originally intended to run 100 times, but I ran out of space on my device due to external sort)
+* Over time, netty memory usage does increase by 4.2MB increments, even on normal runs, and this happens semi frequently.
+* It then "settles" at a point, at which it will remain.
+
+As an initial thought - we ARE using an in-memory node, and while we are not storing any data within tables, we will be storing transactions in the tx table AND in the in-memory log, so there is some state being kept in memory which grows over time. To verify this as the cause of the netty memory usage growth, I rewrote the node to be a "local" node:
+
+```clojure
+(defn ->node []
+  (xtn/start-node {:storage [:local {:path "dev/oom-investigation/objects"}]
+                   :log [:local {:path "dev/oom-investigation/log"} ]
+                   :server {:port 5432
+                            :host "*"}
+                   :healthz {:port 8080
+                             :host "*"}}))
+```
+
+Running the same set of 40 queries, I see the following netty memory usage pattern instead:
