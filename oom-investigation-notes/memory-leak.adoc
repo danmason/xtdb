@@ -104,7 +104,9 @@ In this instance, printed NMT statistics from the REPL into the terminal output,
 ```
 #!/bin/bash
 export JDK_JAVA_OPTIONS="-Xmx3000m -Xms3000m -XX:MaxDirectMemorySize=3000m -XX:MaxMetaspaceSize=500m -XX:+UnlockDiagnosticVMOptions -XX:+PrintNMTStatistics -XX:NativeMemoryTracking=detail"
-./gradlew :clojureRepl --bind 0.0.0.0 -PdebugJvm $@ > nmt.log 2>&1
+LOG_DIR="oom-investigation-notes/repl-logs"
+LOG_FILE="$LOG_DIR/nmt-$(date +%Y%m%d-%H%M%S).log"
+./gradlew :clojureRepl --bind 0.0.0.0 -PdebugJvm "$@" > "$LOG_FILE" 2>&1
 ```
 
 I can also periodically run `jcmd <pid> VM.native_memory summary` to get a snapshot of the NMT stats at various point in time, so future runs will include that too.
