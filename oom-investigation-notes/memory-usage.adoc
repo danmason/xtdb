@@ -1,0 +1,16 @@
+== Container Memory Usage Investigation
+
+* Heap memory will always be using at least the min heap size, so that is 21GB of "non evictable" memory at a minimum.
+* By my understanding, most of the netty allocated memory should be:
+** The memory cache - which is configured to use HALF of the max direct memory size, which is also 21GB, so that is 10.5GB of (mostly) evictable memory.
+** The rest is likely to be a mix of memory used within JOINs and Compaction.
+
+Things I'd like to verify:
+
+* At idle, with nothing running, whats the PROCESS memory usage?
+** I'd expect it to sit at around (min heap), at least initially.
+* If I fill up the memory cache, do I see that reflected in netty memory as expected?
+** Also, what impact does that have on the PROCESS memory usage?
+
+I'm treating local PROCESS memory usage as analogous to the container_memory_working_set_bytes metric, as both are estimates of memory usage that cannot be evicted - if I don't see any anomalies there it may be worth doing similar tests in a k8s environment to see if the same holds true.
+
