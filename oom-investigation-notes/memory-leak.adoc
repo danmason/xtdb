@@ -25,7 +25,7 @@ For this, will setup:
                                  :host "*"}}}})
 (ir/set-prep! (fn [] debug-config))
 ====
-* Setup prometheus & grafana from dev/monitoring to track metrics - specifically Netty memory usage.
+* Setup prometheus & grafana from `monitoring` to track metrics - primarily Netty memory usage.
 
 Then, to attempt to replicate the issue:
 
@@ -218,4 +218,28 @@ As an initial thought - we ARE using an in-memory node, and while we are not sto
                              :host "*"}}))
 ```
 
-Running the same set of 40 queries, I see the following netty memory usage pattern instead:
+Running the same set of 40 queries against the local node, I see the following netty memory usage pattern:
+
+image::clojure-normal-runs-local.png[]
+
+We still see this 4.2MB increment pattern, which would suggest that it isn't related to the in-memory tx table or log.
+
+Also worth noting is the number of "live threads":
+
+image::clojure-normal-runs-local-threads.png[] 
+
+This climbs over time - one for each new connection - and stays there afterwards. 
+
+Running ANOTHER set of 40 queries, I see the following for both netty memory usage and live threads:
+
+image::clojure-normal-runs-local-2.png[]
+image::clojure-normal-runs-local-threads-2.png[]
+
+Notes on this:
+
+* Seems like the ambient netty memory usage here doesn't go much further beyond 232MB.
+* In fact, after this set of queries, it's even lower, sat at around 120MB.
+* It seemingly doesn't increase forever, and neither does the live threads count. 
+* Some form of caching _may_ be responsible here, such as prepared statements. 
+
+Hard to say exactly what this is, but it does seem like the netty memory usage is related to something that grows over time, but has a limit. It seems unlikely to be related to any specific leak.
