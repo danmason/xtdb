@@ -1,4 +1,4 @@
-== Container Memory Usage Investigation
+= Container Memory Usage Investigation
 
 * Heap memory will always be using at least the min heap size, so that is 21GB of "non evictable" memory at a minimum.
 * By my understanding, most of the netty allocated memory should be:
@@ -14,3 +14,260 @@ Things I'd like to verify:
 
 I'm treating local PROCESS memory usage as analogous to the container_memory_working_set_bytes metric, as both are estimates of memory usage that cannot be evicted - if I don't see any anomalies there it may be worth doing similar tests in a k8s environment to see if the same holds true.
 
+I shall assume RSS is a reasonable approximation of container_memory_working_set_bytes - it includes heap, stack, and memory mapped files.
+
+== Method notes
+
+I shall run a gradle REPL from the base of the XTDB repo with the following settings:
+
+```
+JDK_JAVA_OPTIONS="-Xmx3000m -Xms3000m -XX:MaxDirectMemorySize=3000m -XX:MaxMetaspaceSize=500m -XX:NativeMemoryTracking=summary" ./gradlew :clojureRepl --bind 0.0.0.0 
+```
+
+On this REPL, I shall run a local XTDB node with the following config:
+
+```
+(defn ->node []
+  (xtn/start-node {:storage [:local {:path "dev/memory-usage/objects"}]
+                   :log [:local {:path "dev/memory-usage/log"} ]
+                   :server {:port 5432
+                            :host "*"}
+                   :healthz {:port 8080
+                             :host "*"}}))
+```
+
+In addition:
+
+* I shall be running prometheus/grafana (within `monitoring`) for the sake of viewing any reported metrics.
+* I shall note any particular queries/transactions I send against this node, what I am trying to do, and what kind of memory usage I expect.
+
+== Base memory usage
+
+To fetch the PID of the running java process, I used:
+```
+ps aux | grep java
+```
+
+At idle, prior to even starting the node, I see the following (using ps -p <PID> -o vsz,rss)
+```
+   VSZ   RSS
+7034088 2184888
+```
+
+This is immediately interesting - given that the min heap size is 3GB, I was expecting the RSS to be _at least_ that much. This is obviously reflected within the VSZ - though that is not a particularly useful metric for us here.
+
+Looking at results from NMT summary (ie, `jcmd <PID> VM.native_memory summary`), I see the following:
+
+```
+Native Memory Tracking:
+
+(Omitting categories weighting less than 1KB)
+
+Total: reserved=4000512KB, committed=3330556KB
+       malloc: 62128KB #264071
+       mmap:   reserved=3938384KB, committed=3268428KB
+
+-                 Java Heap (reserved=3072000KB, committed=3072000KB)
+                            (mmap: reserved=3072000KB, committed=3072000KB, at peak) 
+ 
+-                     Class (reserved=415690KB, committed=19594KB)
+                            (classes #12081)
+                            (  instance classes #11661, array classes #420)
+                            (malloc=6090KB #97462) (peak=6092KB #97474) 
+                            (mmap: reserved=409600KB, committed=13504KB, at peak) 
+                            (  Metadata:   )
+                            (    reserved=65536KB, committed=46144KB)
+                            (    used=40819KB)
+                            (    waste=5325KB =11.54%)
+                            (  Class space:)
+                            (    reserved=409600KB, committed=13504KB)
+                            (    used=10701KB)
+                            (    waste=2803KB =20.75%)
+ 
+-                    Thread (reserved=33884KB, committed=1500KB)
+                            (threads #33)
+                            (stack: reserved=33792KB, committed=1408KB, peak=1408KB)
+                            (malloc=55KB #203) (peak=85KB #267) 
+                            (arena=37KB #64) (peak=835KB #68)
+ 
+-                      Code (reserved=250566KB, committed=31974KB)
+                            (malloc=2882KB #8581) (at peak) 
+                            (mmap: reserved=247684KB, committed=29092KB, at peak) 
+                            (arena=0KB #0) (peak=66KB #2)
+ 
+-                        GC (reserved=125398KB, committed=125398KB)
+                            (malloc=32054KB #16999) (peak=32068KB #15913) 
+                            (mmap: reserved=93344KB, committed=93344KB, at peak) 
+ 
+-                 GCCardSet (reserved=396KB, committed=396KB)
+                            (malloc=396KB #4582) (peak=396KB #4582) 
+ 
+-                  Compiler (reserved=269KB, committed=269KB)
+                            (malloc=105KB #1380) (peak=135KB #1417) 
+                            (arena=164KB #4) (peak=120443KB #59)
+ 
+-                  Internal (reserved=618KB, committed=618KB)
+                            (malloc=582KB #16134) (peak=604KB #16234) 
+                            (mmap: reserved=36KB, committed=36KB, at peak) 
+ 
+-                     Other (reserved=1558KB, committed=1558KB)
+                            (malloc=1558KB #2) (peak=3117KB #4) 
+ 
+-                    Symbol (reserved=9448KB, committed=9448KB)
+                            (malloc=8161KB #95001) (at peak) 
+                            (arena=1287KB #1) (at peak)
+ 
+-    Native Memory Tracking (reserved=4195KB, committed=4195KB)
+                            (malloc=69KB #1236) (peak=70KB #1254) 
+                            (tracking overhead=4126KB)
+ 
+-        Shared class space (reserved=16384KB, committed=12892KB, readonly=0KB)
+                            (mmap: reserved=16384KB, committed=12892KB, peak=13140KB) 
+ 
+-               Arena Chunk (reserved=2KB, committed=2KB)
+                            (malloc=2KB #102) (peak=120951KB #2844) 
+ 
+-                    Module (reserved=2796KB, committed=2796KB)
+                            (malloc=2796KB #12784) (at peak) 
+ 
+-                 Safepoint (reserved=8KB, committed=8KB)
+                            (mmap: reserved=8KB, committed=8KB, at peak) 
+ 
+-           Synchronization (reserved=856KB, committed=856KB)
+                            (malloc=856KB #8414) (peak=857KB #8423) 
+ 
+-            Serviceability (reserved=17KB, committed=17KB)
+                            (malloc=17KB #12) (peak=17KB #11) 
+ 
+-                 Metaspace (reserved=66428KB, committed=47036KB)
+                            (malloc=892KB #1154) (at peak) 
+                            (mmap: reserved=65536KB, committed=46144KB, at peak) 
+ 
+-      String Deduplication (reserved=1KB, committed=1KB)
+                            (malloc=1KB #8) (at peak) 
+ 
+-           Object Monitors (reserved=0KB, committed=0KB)
+                            (malloc=0KB #1) (peak=3KB #16) 
+ 
+-                   Unknown (reserved=0KB, committed=0KB)
+                            (mmap: reserved=0KB, committed=0KB, peak=20KB) 
+ 
+```
+
+Again - quite a bit more reserved & committed than what we see reflected in the RSS value.
+
+It's an interesting point to keep in mind given we've seen the OPPOSITE in practice when running XTDB, where the generally reported kubernetes memory usage is higher than both our heap and netty memory usage combined.
+
+This also marks one of my initial assumptions as incorrect - I had assumed that the min heap size would be "non evictable" memory, but it seems that the JVM is not actually committing all of that memory up front.
+
+== After starting the node
+
+After connecting to the running REPL and running the node config above, I see the following:
+
+```
+   VSZ   RSS
+8767880 2771524
+```
+
+We see that both values have increased here. Also, from NMT summary:
+
+```
+Native Memory Tracking:
+
+(Omitting categories weighting less than 1KB)
+
+Total: reserved=4145139KB, committed=3495815KB
+       malloc: 112547KB #653570
+       mmap:   reserved=4032592KB, committed=3383268KB
+
+-                 Java Heap (reserved=3072000KB, committed=3072000KB)
+                            (mmap: reserved=3072000KB, committed=3072000KB, at peak) 
+ 
+-                     Class (reserved=426706KB, committed=53522KB)
+                            (classes #28979)
+                            (  instance classes #28186, array classes #793)
+                            (malloc=17106KB #270954) (at peak) 
+                            (mmap: reserved=409600KB, committed=36416KB, at peak) 
+                            (  Metadata:   )
+                            (    reserved=131072KB, committed=118464KB)
+                            (    used=102725KB)
+                            (    waste=15739KB =13.29%)
+                            (  Class space:)
+                            (    reserved=409600KB, committed=36416KB)
+                            (    used=28363KB)
+                            (    waste=8053KB =22.11%)
+ 
+-                    Thread (reserved=62649KB, committed=5009KB)
+                            (threads #61)
+                            (stack: reserved=62464KB, committed=4824KB, peak=4824KB)
+                            (malloc=116KB #372) (peak=139KB #418) 
+                            (arena=70KB #120) (peak=916KB #97)
+ 
+-                      Code (reserved=252296KB, committed=49896KB)
+                            (malloc=4612KB #12710) (peak=4618KB #12717) 
+                            (mmap: reserved=247684KB, committed=45284KB, at peak) 
+                            (arena=0KB #0) (peak=66KB #2)
+ 
+-                        GC (reserved=125633KB, committed=125633KB)
+                            (malloc=32289KB #22450) (peak=32362KB #21643) 
+                            (mmap: reserved=93344KB, committed=93344KB, at peak) 
+ 
+-                 GCCardSet (reserved=503KB, committed=503KB)
+                            (malloc=503KB #4683) (peak=574KB #4711) 
+ 
+-                  Compiler (reserved=477KB, committed=477KB)
+                            (malloc=313KB #2260) (peak=355KB #2254) 
+                            (arena=164KB #4) (peak=120443KB #59)
+ 
+-                  Internal (reserved=1189KB, committed=1189KB)
+                            (malloc=1153KB #31562) (peak=1160KB #31555) 
+                            (mmap: reserved=36KB, committed=36KB, at peak) 
+ 
+-                     Other (reserved=6195KB, committed=6195KB)
+                            (malloc=6195KB #38) (peak=9318KB #42) 
+ 
+-                    Symbol (reserved=27290KB, committed=27290KB)
+                            (malloc=24245KB #249816) (at peak) 
+                            (arena=3045KB #1) (at peak)
+ 
+-    Native Memory Tracking (reserved=10378KB, committed=10378KB)
+                            (malloc=166KB #2990) (peak=167KB #2999) 
+                            (tracking overhead=10212KB)
+ 
+-        Shared class space (reserved=16384KB, committed=12892KB, readonly=0KB)
+                            (mmap: reserved=16384KB, committed=12892KB, peak=13140KB) 
+ 
+-               Arena Chunk (reserved=3KB, committed=3KB)
+                            (malloc=3KB #213) (peak=120951KB #2844) 
+ 
+-                    Module (reserved=7756KB, committed=7756KB)
+                            (malloc=7756KB #33294) (at peak) 
+ 
+-                 Safepoint (reserved=8KB, committed=8KB)
+                            (mmap: reserved=8KB, committed=8KB, at peak) 
+ 
+-           Synchronization (reserved=1855KB, committed=1855KB)
+                            (malloc=1855KB #18256) (peak=1856KB #18261) 
+ 
+-            Serviceability (reserved=18KB, committed=18KB)
+                            (malloc=18KB #19) (at peak) 
+ 
+-                 Metaspace (reserved=133798KB, committed=121190KB)
+                            (malloc=2726KB #3928) (at peak) 
+                            (mmap: reserved=131072KB, committed=118464KB, at peak) 
+ 
+-      String Deduplication (reserved=1KB, committed=1KB)
+                            (malloc=1KB #8) (at peak) 
+ 
+-           Object Monitors (reserved=0KB, committed=0KB)
+                            (malloc=0KB #1) (peak=10KB #49) 
+ 
+-                   Unknown (reserved=0KB, committed=0KB)
+                            (mmap: reserved=0KB, committed=0KB, peak=20KB) 
+```
+
+Notes:
+
+* We see increases in almost all categories here, which is to be expected given the node has started up and initialised itself, loading in classes it needs, etc. 
+* The heap is still sitting at 3GB committed, as expected.
+* The RSS value increased more than increases observed in memory from the NMT summary - interesting, but perhaps not unexpected, as we touch more memory pages as the node starts up (ie, begin to use more of that heap memory, etc).
