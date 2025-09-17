@@ -6,9 +6,7 @@
 (def large-query
   "SELECT * FROM GENERATE_SERIES(1, 10000000) AS l(n) 
    LEFT JOIN GENERATE_SERIES(1, 10000000) 
-   AS r(m) ON n = m 
-   ORDER BY n
-   LIMIT 100;")
+   AS r(m) ON n = m;")
 
 (defn ->node []
   (xtn/start-node {:storage [:local {:path "dev/oom-investigation/objects"}]
@@ -37,25 +35,50 @@
            (catch Exception e
              (println "Query was cancelled:" (.getMessage e)))))))))
 
+(defn run-and-wait-query
+  ([node] (run-and-wait-query node 1000))
+  ([node wait-ms]
+   (let [connection-builder (.createConnectionBuilder node)]
+     (with-open [^Connection conn (.build connection-builder)
+                  stmt (.createStatement conn)
+                  rs (.executeQuery stmt large-query)]
+       (.setFetchSize stmt 100)
+       (prn "Waiting..." wait-ms)
+       (Thread/sleep wait-ms)
+       (prn "Done waiting")
+       (loop [i 0 acc []]
+         (if (and (< i 10) (.next rs))
+           (recur (inc i) (conj acc (.getString rs 1))) ; or any column accessor
+           acc))))))
+
+(defn stress-queries
+  [node n wait-ms]
+  (doall
+   (for [i (range n)]
+     (future
+       (println "Starting query" i)
+       (try
+         (run-and-wait-query node wait-ms)
+         (catch Exception e
+           (println "Query" i "failed:" (.getMessage e)))
+         (finally
+           (println "Finished query" i)))))))
+
+
 (comment
 
   (def node (->node))
 
-  (dotimes [n 100] (run-query node))
+  (run-query node)
   
   (run-and-cancel-query node)
 
   (run-and-cancel-query node 1000)
+
+  (run-and-wait-query node 120000)
   
   ;; when done/resetting
   
   (.close node)
   )
 
-;; memory usage increase in increments between connections
-;; 1. verify that, try all on one connection.
-;; 2. Whats keeping that around? Prepared statements perhaps?
-;; 3. query.clj
-;; memory node -> netty usage on tx log/object store table/blocks??
-
-;;; TODO - local node it up
