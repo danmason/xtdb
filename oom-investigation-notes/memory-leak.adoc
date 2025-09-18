@@ -243,3 +243,69 @@ Notes on this:
 * Some form of caching _may_ be responsible here, such as prepared statements. 
 
 Hard to say exactly what this is, but it does seem like the netty memory usage is related to something that grows over time, but has a limit. It seems unlikely to be related to any specific leak.
+
+== OOMKilled Repro with TPCH
+
+Following some investigation by Jeremy, we arrived at a potential repro.
+
+Running XTDB within docker:
+
+```
+mkdir -p /tmp/xtdb1;
+sudo chown -R 20000:20000 /tmp/xtdb1;
+docker run -v /tmp/xtdb1:/var/lib/xtdb \
+    --env XTDB_LOGGING_LEVEL='DEBUG' \
+    --env XTDB_SKIP_TXES='4993446721726062665' \
+    --env JDK_JAVA_OPTIONS='-Xmx1000m -Xms1000m -XX:MaxDirectMemorySize=2000m -XX:MaxMetaspaceSize=256m' \
+    -p 5432:5432 -p 8080:8080 \
+    --memory="5000m" --memory-swap="5000m" \
+    --pull=always ghcr.io/xtdb/xtdb:edge
+```
+
+We do the following:
+```
+;; at the bottom of tpch.clj
+(defn ->connection []
+  (jdbc/get-connection {:dbname "xtdb"
+                        :host "localhost"
+                        :port 5432
+                        :classname "xtdb.jdbc.Driver"
+                        :dbtype "xtdb"}))
+
+;; submit TPCH SF 0.5
+(with-open [conn (->connection)]
+  (submit-dml-jdbc! conn 0.5))
+
+;; followed by this query:
+(with-open [conn (->connection)]
+  (jdbc/execute! conn ["select count(*) from orders;"]))
+```
+
+Mid way through the TPCH submit, my docker container was OOMKilled (from docker ps --all):
+```
+9e8d9089a9b9   ghcr.io/xtdb/xtdb:edge "java -Dclojure.main…" 4 minutes ago   Exited (137)
+```
+
+Error code 137 is "killed" - ie, OOMKilled.
+
+From `journalctl -k | grep -i oom`:
+```
+Memory cgroup out of memory: Killed process 22505 (java) total-vm:9079864kB, anon-rss:2799840kB, file-rss:25888kB, shmem-rss:0kB, UID:20000 pgtables:6252kB oom_score_adj:0
+```
+
+Some views of heap + direct memory usage graphs during the run:
+
+image::tpch-oom-1.png[]
+image::tpch-oom-2.png[]
+image::tpch-oom-3.png[]
+
+Assuming our overall memory usage of XTDB can be summarized by Heap usage and netty direct memory usage, we can see that we don't even really approach the 5GB limit of memory we set on the container. 
+
+* The same is true even if we assume the FULL heap was being used in memory!
+
+This would suggest that something ELSE is using a large amount of memory that isn't being tracked by these metrics.
+
+Next steps here:
+
+* Try to gather some metrics from Docker itself to see if we can get a better idea of what memory is being used by the container.
+* Varying settings - what happens if we remove memory-swap, for example?
