@@ -255,16 +255,18 @@ mkdir -p /tmp/xtdb1;
 sudo chown -R 20000:20000 /tmp/xtdb1;
 docker run -v /tmp/xtdb1:/var/lib/xtdb \
     --env XTDB_LOGGING_LEVEL='DEBUG' \
-    --env XTDB_SKIP_TXES='4993446721726062665' \
     --env JDK_JAVA_OPTIONS='-Xmx1000m -Xms1000m -XX:MaxDirectMemorySize=2000m -XX:MaxMetaspaceSize=256m' \
     -p 5432:5432 -p 8080:8080 \
     --memory="5000m" --memory-swap="5000m" \
     --pull=always ghcr.io/xtdb/xtdb:edge
 ```
 
-We do the following:
+And using the following from the REPL:
 ```
-;; at the bottom of tpch.clj
+(ns memory-usage-tpch
+  (:require [next.jdbc :as jdbc]
+            [xtdb.datasets.tpch :as tpch]))
+
 (defn ->connection []
   (jdbc/get-connection {:dbname "xtdb"
                         :host "localhost"
@@ -274,7 +276,7 @@ We do the following:
 
 ;; submit TPCH SF 0.5
 (with-open [conn (->connection)]
-  (submit-dml-jdbc! conn 0.5))
+  (tpch/submit-dml-jdbc! conn 0.5))
 
 ;; followed by this query:
 (with-open [conn (->connection)]
@@ -305,7 +307,28 @@ Assuming our overall memory usage of XTDB can be summarized by Heap usage and ne
 
 This would suggest that something ELSE is using a large amount of memory that isn't being tracked by these metrics.
 
+One last thing to note - the entirety of the xtdb1 directory itself is around 2.3GB on disk:
+
+```
+2304172	xtdb1/
+```
+
 Next steps here:
 
+* What happens if we remove memory-swap here?
 * Try to gather some metrics from Docker itself to see if we can get a better idea of what memory is being used by the container.
-* Varying settings - what happens if we remove memory-swap, for example?
+
+=== Re-running without memory-swap
+
+Re-running the above, but without memory-swap:
+
+```
+mkdir -p /tmp/xtdb1
+sudo chown -R 20000:20000 /tmp/xtdb1
+docker run -v /tmp/xtdb1:/var/lib/xtdb \
+    --env XTDB_LOGGING_LEVEL='DEBUG' \
+    --env JDK_JAVA_OPTIONS='-Xmx1000m -Xms1000m -XX:MaxDirectMemorySize=2000m -XX:MaxMetaspaceSize=256m' \
+    -p 5432:5432 -p 8080:8080 \
+    --memory="5000m" \
+    --pull=always ghcr.io/xtdb/xtdb:edge
+```
