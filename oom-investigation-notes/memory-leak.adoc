@@ -362,3 +362,51 @@ So:
 * The resident set is quite a bit lower than this, and stays below the limit.
 * The working set size is far larger than both our netty memory usage and our heap usage combined.
 * The memory cache sits at around 2.5GB at peak, which when added to the resident set, would account for the working set size. 
+
+== The Working Set
+
+Ultimately,`container_memory_working_set_bytes` is what is used by k8s for the sake of making OOM decisions, so this value going above our set limit is the cause of our OOMKills.
+
+So, important for us to understand what this value is, and what it consists of.
+
+=== What is it?
+
+From the Kubernetes link:https://kubernetes.io/docs/reference/instrumentation/metrics/[*Kubernetes Metrics Reference*]:
+
+> `container_memory_working_set_bytes`
+>
+> "Current working set of the container in bytes".
+
+Expanding on their meaning of "working set", from link:https://kubernetes.io/docs/tasks/debug/debug-cluster/resource-metrics-pipeline/#memory["Resource metrics pipeline"]:
+
+> Memory is reported as the working set, measured in bytes, at the instant the metric was collected.
+>
+> In an ideal world, the "working set" is the amount of memory in-use that cannot be freed under memory pressure. However, calculation of the working set varies by host OS, and generally makes heavy use of heuristics to produce an estimate.
+>
+> The Kubernetes model for a container's working set expects that the container runtime counts anonymous memory associated with the container in question. The working set metric typically also includes some cached (file-backed) memory, because the host OS cannot always reclaim pages.
+
+So, in summary, the working set is an estimate of the memory a container is actively using and that cannot be reclaimed under memory pressure.
+
+It generally consists of:
+
+* Anonymous memory (e.g. heap, stack)
+* Some cached (file-backed) memory that the kernel cannot reclaim
+* Other in-use memory (e.g. certain kernel allocations tied to the container)
+
+It excludes:
+
+* Free memory
+* Easily reclaimable memory (e.g. parts of the page cache)
+
+=== Comparing to Total
+
+In our run, we see something quite interesting here when comparing the working set to the total memory usage from cAdvisor:
+
+image::cadvisor-working-set.png[]
+image::cadvisor-total.png[]
+
+Specifically - the total memory usage is almost **identical** to our working set - ie, almost all of the memory being used by the container is considered to be "in use" and **not reclaimable**.
+
+This seemingly includes (essentially) the entire container page cache, which is quite large - around 2.5GB at peak:
+
+image::cadvisor-memory-cache.png[]
