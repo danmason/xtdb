@@ -258,7 +258,8 @@ docker run -v /tmp/xtdb1:/var/lib/xtdb \
     --env JDK_JAVA_OPTIONS='-Xmx1000m -Xms1000m -XX:MaxDirectMemorySize=2000m -XX:MaxMetaspaceSize=256m' \
     -p 5432:5432 -p 8080:8080 \
     --memory="5000m" --memory-swap="5000m" \
-    --pull=always ghcr.io/xtdb/xtdb:edge
+    --name="xtdb-oom-test" \
+    --pull=always ghcr.io/xtdb/xtdb:edge 
 ```
 
 And using the following from the REPL:
@@ -318,7 +319,7 @@ Next steps here:
 * What happens if we remove memory-swap here?
 * Try to gather some metrics from Docker itself to see if we can get a better idea of what memory is being used by the container.
 
-=== Re-running without memory-swap
+== Re-running without memory-swap
 
 Re-running the above, but without memory-swap:
 
@@ -330,5 +331,34 @@ docker run -v /tmp/xtdb1:/var/lib/xtdb \
     --env JDK_JAVA_OPTIONS='-Xmx1000m -Xms1000m -XX:MaxDirectMemorySize=2000m -XX:MaxMetaspaceSize=256m' \
     -p 5432:5432 -p 8080:8080 \
     --memory="5000m" \
-    --pull=always ghcr.io/xtdb/xtdb:edge
+    --name="xtdb-oom-test" \
+    --pull=always ghcr.io/xtdb/xtdb:edge 
 ```
+
+This ran for a _bit_ longer, but was ALSO OOMKilled - so memory-swap wasn't the issue.
+
+== Capturing & observing docker metrics
+
+=== Setup
+
+For the sake of capturing docker cAdvisor metrics and displaying all of our relevant metrics, I have taken a copy of `monitoring` and modified it as such:
+
+* Added `cadvisor` to `docker-compose.yml`
+* Ensured `prometheus` is scraping cadvisor metrics
+* Added an additional dashboard for all the memory related metrics - from our existing metrics and from cAdvisor.
+
+This lives under `oom-investigation-notes/monitoring-stack`.
+
+=== Running the repro
+
+Running the above repro, and observing the memory usage over time, we see the following (side by side - cAdvisor memory usage on top, our existing memory metrics below):
+
+image::metrics-with-cadvisor-1.png[]
+image::metrics-with-cadvisor-2.png[]
+
+So:
+
+* We can see that the working set memory from cAdvisor DOES go above the set limit, which is what causes the OOMKill.
+* The resident set is quite a bit lower than this, and stays below the limit.
+* The working set size is far larger than both our netty memory usage and our heap usage combined.
+* The memory cache sits at around 2.5GB at peak, which when added to the resident set, would account for the working set size. 
