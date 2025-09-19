@@ -31,6 +31,7 @@
   (println " * `node` (default, can be omitted): starts an XT node")
   (println " * `compactor`: runs a compactor-only node")
   (println " * `playground`: starts a 'playground', an in-memory node which accepts any database name, creating it if required")
+  (println " * `test-mmap`: runs a memory mapping test to observe memory usage patterns")
   (println " * `reset-compactor <db-name>`: resets the compacted files on the given node.")
   (newline)
   (println "For more information about any command, run `<command> --help`, e.g. `playground --help`"))
@@ -221,6 +222,16 @@
           (println "Usage: `read-hash-trie-file <file>")
           (System/exit 2))))))
 
+(def test-mmap-cli-spec
+  [config-file-opt
+   ["-h" "--help"]])
+
+(defn- test-mmap [args]
+  (let [{{:keys [file]} :options} (-> (parse-args args test-mmap-cli-spec)
+                                      (handling-arg-errors-or-help))]
+    (log/info "Starting memory mapping test...")
+    ((requiring-resolve 'xtdb.test-mmap/run-test) (file->node-opts file))))
+
 (defn -main [& args]
   (binding [*out* *err*]
     (println (str "Starting " (version-string) " ...")))
@@ -235,6 +246,7 @@
         "compactor" (start-compactor more-args)
         "playground" (start-playground more-args)
         "node" (start-node more-args)
+        "test-mmap" (test-mmap more-args)
 
         "reset-compactor" (do
                             (reset-compactor! more-args)
@@ -267,4 +279,3 @@
         (shutdown-agents)
         (log/error t "Uncaught exception running XTDB")
         (System/exit 1)))))
-
