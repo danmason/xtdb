@@ -410,3 +410,167 @@ Specifically - the total memory usage is almost **identical** to our working set
 This seemingly includes (essentially) the entire container page cache, which is quite large - around 2.5GB at peak:
 
 image::cadvisor-memory-cache.png[]
+
+=== What the Page Cache Is
+
+The page cache is RAM used by the Linux kernel to cache file-backed pages.
+It sits between the process and the disk.
+
+Contents:
+
+* File data you've read (read() → kernel caches it)
+* File data you've written (dirty pages waiting for flush)
+* Memory-mapped files (mmap) — both read-only and read/write
+
+A page in the cache is reclaimable if:
+
+* It's clean (matches what's on disk) → Kernel can drop it instantly if memory pressure comes
+* It's not pinned (i.e., no active mmap, DMA, or direct reference holding it)
+
+==== When Pages Become Non-Reclaimable
+
+Pages become "stuck" in the working set if:
+
+* **Dirty but not flushed yet**
+** Written to but not synced to disk
+** Kernel must flush before reclaim
+** If flushing is slow (disk IO bottleneck), dirty pages may pile up
+
+* **Mapped into a process**
+** If you mmap() a file (common in JVM world: JARs, RocksDB/Lucene indices, shared libs), the pages stay referenced
+** They can still be evicted sometimes, but are harder to reclaim while mapped
+
+* **mlock() or pinned by kernel/userspace**
+** Explicitly locked into RAM → never reclaimable until unlocked
+
+* **Cgroup memory accounting quirks**
+** In Docker with memory limits, sometimes page cache is charged to the cgroup and appears non-reclaimable until eviction pressure hits
+
+=== Potential Memory Double-Counting Theory
+
+Haven't got a hard theory yet, but I am wondering if there's a problem with some leftover mmap stuff we're doing in XTDB - such as, for example, double counting memory in both the page cache and the allocator? 
+
+Since we do some memory mapping and wrap foreign allocations in our RootAllocator, perhaps we are measuring the memory twice - once in the page cache and once in our allocator metrics. This could explain why so much of the page cache is non-reclaimable - because it's mapped into our process.
+
+Alternatively - perhaps we are memory mapping and NOT counting it properly under the allocator, so any limits we are setting within the allocator are meaningless and not being respected.
+
+I am specifically curious on the usage of mmap within the memory cache.
+
+== Testing memory mapping usage
+
+=== CLI tool
+
+The `test_mmap.clj` program is a memory mapping testing utility that:
+
+1. **Starts an XTDB node** to access the memory cache/buffer pool system
+2. **Creates a byte buffer** of size 500MiB
+3. **Stores the byte buffer** in the buffer pool using `putObject`
+4. **Retrieves the byte buffer** using `getByteArray`, multiple times.
+5. **Runs until manually stopped**, allowing observation of memory usage 
+
+Code:
+```clojure
+(ns xtdb.test-mmap
+  (:require [clojure.tools.logging :as log]
+            [xtdb.node :as xtn]
+            [xtdb.util :as util]
+            [xtdb.db-catalog :as db-cat])
+  (:import (java.nio ByteBuffer) 
+           (java.util Random)
+           (xtdb.database Database)))
+
+(defn generate-random-byte-buffer ^ByteBuffer [buffer-size]
+  (let [random (Random.)
+        byte-buffer (ByteBuffer/allocate buffer-size)]
+    (loop [i 0]
+      (if (< i buffer-size)
+        (do
+          (.put byte-buffer (byte (.nextInt random 128)))
+          (recur (inc i)))
+        (.flip byte-buffer)))))
+
+(defn create-500mb-buffer []
+  (generate-random-byte-buffer (* 500 1024 1024)))
+
+(defn run-test [node-opts] 
+  (with-open [node (xtn/start-node node-opts)]
+    (log/info "XTDB node started")
+
+    (log/info "Waiting 1 minute for caches to warm up...")
+    (Thread/sleep 60000)
+
+    (let [^Database db (db-cat/primary-db node)
+          buffer-pool (.getBufferPool db)
+          test-path (util/->path "test-500mb.bin")
+          test-buffer (create-500mb-buffer)]
+
+      (log/info "Putting 500MB ByteBuffer into buffer pool...")
+      (.putObject buffer-pool test-path test-buffer)
+      (log/info "Successfully stored ByteBuffer")
+
+      (log/info "Retrieving ByteBuffer from buffer pool...")
+      (let [retrieved-data (.getByteArray buffer-pool test-path)]
+        (log/info (format "Retrieved %d bytes" (count retrieved-data))))
+
+      (Thread/sleep 10000)
+
+      (log/info "Multiple retrievals from buffer pool...")
+      (dotimes [i 5]
+        (let [slice-data (.getByteArray buffer-pool test-path)]
+          (log/info (format "Retrieval %d: %d bytes" (inc i) (count slice-data)))
+          (Thread/sleep 10000)))
+
+      ;; Keep running to observe memory patterns
+      (try
+        (while true
+          (Thread/sleep 30000)
+          (log/info "Still running - memory cache active"))
+        (catch InterruptedException _
+          (log/info "Test stopped"))))))
+```
+
+This is also added to the XTDB CLI under main.clj:
+
+```
+(def test-mmap-cli-spec
+  [config-file-opt
+   ["-h" "--help"]])
+
+(defn- test-mmap [args]
+  (let [{{:keys [file]} :options} (-> (parse-args args test-mmap-cli-spec)
+                                      (handling-arg-errors-or-help))]
+    (log/info "Starting memory mapping test...")
+    ((requiring-resolve 'xtdb.test-mmap/run-test) (file->node-opts file))))
+```
+
+We build this as a docker image by building the local standalone docker image.
+
+=== Running the test
+
+For the dockerized XTDB image, I used the following command to run the `test_mmap.clj` program:
+
+```bash
+mkdir -p /tmp/xtdb1
+sudo chown -R 20000:20000 /tmp/xtdb1
+docker run -v /tmp/xtdb1:/var/lib/xtdb \
+    --env XTDB_LOGGING_LEVEL='DEBUG' \
+    --env JDK_JAVA_OPTIONS='-Xmx5000m -Xms5000m -XX:MaxDirectMemorySize=5000m -XX:MaxMetaspaceSize=256m' \
+    -p 5432:5432 -p 8080:8080 \
+    --name="xtdb-oom-test" docker.io/xtdb/xtdb test-mmap --file local_config.yaml
+```
+
+Ran alongside the monitoring stack to observe memory usage - I see the following memory metrics from cAdvisor and the XTDB node:
+
+image::test-mmap-cadvisor.png[]
+image::test-mmap-xtdb-metrics.png[]
+
+So here's what we see, most importantly:
+
+* We can see the point when when we load the 524MB (500MiB) buffer into the memory cache.
+  * At that time - our netty memory/direct memory allocation here goes also to 524MB.
+  * ALSO at that time - the page cache increases by around 524MB.
+* The heap memory increases as we load the buffer with getByteArray - though eventually drops back down.
+* Both the resident and working memory sets increase over time - the working memory set is and remains around 524MB LARGER than the resident set.
+
+I believe this supports the theory that we are double counting memory here - the 500MiB buffer is being counted in both the netty direct memory usage AND in the page cache, which will leading to an overestimation of our actual memory usage by Kubernetes.
+
