@@ -638,7 +638,13 @@ tasks.register<JavaExec>("readArrowFile") {
     mainClass.set("clojure.main")
     jvmArgs(defaultJvmArgs + sixGBJvmArgs)
     val file = project.property("file") as? String ?: error("Please provide -Pfile")
-    this.args = listOf("-m", "xtdb.main", "read-arrow-file", file)
+    val outputFile = project.findProperty("outputFile") as? String
+    val args = mutableListOf("-m", "xtdb.main", "read-arrow-file", file)
+    if (outputFile != null) {
+        args.add("-o")
+        args.add(outputFile)
+    }
+    this.args = args
 }
 
 tasks.register<JavaExec>("readArrowStreamFile") {
@@ -648,5 +654,11 @@ tasks.register<JavaExec>("readArrowStreamFile") {
     mainClass.set("clojure.main")
     jvmArgs(defaultJvmArgs + sixGBJvmArgs)
     val file = project.property("file") as? String ?: error("Please provide -Pfile")
-    this.args = listOf("-m", "xtdb.main", "read-arrow-stream-file", file)
+    val outputFile = project.findProperty("outputFile") as? String
+    val args = mutableListOf("-m", "xtdb.main", "read-arrow-stream-file", file)
+    if (outputFile != null) {
+        args.add("-o")
+        args.add(outputFile)
+    }
+    this.args = args
 }

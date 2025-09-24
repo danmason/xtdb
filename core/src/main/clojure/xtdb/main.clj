@@ -167,39 +167,47 @@
 
     ((requiring-resolve 'xtdb.compactor.reset/reset-compactor!) (file->node-opts file) db-name {:dry-run? dry-run?})))
 
+(def output-file-opt
+  ["-o" "--output OUTPUT_FILE" "File path to outhput resultant EDN to"
+   :id :output-file
+   :parse-fn io/file])
+
 (def read-arrow-file-cli-spec
-  [["-h" "--help"]])
+  [output-file-opt
+   ["-h" "--help"]])
 
 (defn read-arrow-file [args]
-  (let [{{:keys [help]} :options} (-> (parse-args args read-arrow-file-cli-spec)
-                                      (handling-arg-errors-or-help))]
+  (let [{{:keys [help output-file]} :options} (-> (parse-args args read-arrow-file-cli-spec)
+                                                  (handling-arg-errors-or-help))]
     (if help
       (do
-        (println "Usage: read-arrow-file <file>")
+        (println "Usage: read-arrow-file <file> [opts]")
         (System/exit 0))
 
       (if-let [file (first args)]
-        (binding [pp/*print-right-margin* 120]
-          ((requiring-resolve 'xtdb.arrow/with-arrow-file) file pp/pprint))
+        (let [output-method (if output-file (fn [res] (spit output-file (with-out-str (pp/pprint res)))) pp/pprint)]
+          (binding [pp/*print-right-margin* 120]
+            ((requiring-resolve 'xtdb.arrow/with-arrow-file) file output-method)))
 
         (binding [*out* *err*]
-          (println "Usage: `read-arrow-file <file>`")
+          (println "Usage: `read-arrow-file <file> [opts]`")
           (System/exit 2))))))
 
 (defn read-arrow-stream-file [args]
-  (let [{{:keys [help]} :options} (-> (parse-args args read-arrow-file-cli-spec)
-                                      (handling-arg-errors-or-help))]
+  (let [{{:keys [help output-file]} :options} (-> (parse-args args read-arrow-file-cli-spec)
+                                                  (handling-arg-errors-or-help))]
     (if help
       (do
-        (println "Usage: read-arrow-stream-file <file>")
+        (println "Usage: read-arrow-stream-file <file> [opts]")
         (System/exit 0))
 
       (if-let [file (first args)]
-        (binding [pp/*print-right-margin* 120]
-          (pp/pprint ((requiring-resolve 'xtdb.arrow/read-arrow-stream-file) file)))
+        (let [output-method (if output-file (fn [res] (spit output-file (with-out-str (pp/pprint res)))) pp/pprint)]
+          (binding [pp/*print-right-margin* 120]
+            (output-method ((requiring-resolve 'xtdb.arrow/read-arrow-stream-file) file))))
 
         (binding [*out* *err*]
-          (println "Usage: `read-arrow-stream-file <file>`")
+          (println "Usage: `read-arrow-stream-file <file> [opts]`")
           (System/exit 2))))))
 
 (defn -main [& args]
