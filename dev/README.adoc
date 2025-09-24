@@ -132,6 +132,26 @@ These tools output an Arrow file in EDN format
 --
 * `./gradlew -q :readArrowFile -Pfile=<file>`
 * `./gradlew -q :readArrowStreamFile -Pfile=<file>` if it's in 'stream IPC' format.
+* `./gradlew -q :readArrowFile -Pfile=<file> -PoutputFile=<output-file>` to write to a file.
+--
+
+Reading a hash trie file::
++
+--
+* `./gradlew -q :readHashTrieFile -Pfile=<file>`
+* `./gradlew -q :readHashTrieFile -Pfile=<file> -PoutputFile=<output-file>` to write to a file.
+--
+
+Reading crash logs::
++
+--
+Process crash logs into EDN format:
+
+1. Place crash log directory relative to `dev/read-crash-logs/read-from-folder.sh`
+2. Run: `./dev/read-crash-logs/read-from-folder.sh <crash-log-dir>`
+3. EDN files will be output to `<crash-log-dir>/edn/`
+
+Example: `./dev/read-crash-logs/read-from-folder.sh ./my-crash-logs` outputs to `./my-crash-logs/edn/`
 --
 
 == Arrow Fork
