@@ -631,5 +631,47 @@ Though the specifics to improve how we're handling memory within the memory_cach
 
 My current thinking is that the page cache MUST be considered to be in use by unevictable pages - potentially that something holds open a file handle to the underlying files, which means that the pages cannot be evicted. As for what exactly is holding these files open, I am not sure - this could be something within netty, or arrow, or something with XTDB.
 
-The TPCH process is dying entirely during ingest (currently) - so it's worth considering what may run/use memory during this process.
+The TPCH process is dying entirely during ingest (currently) - so it's worth considering what may run/use memory during this process:
 
+- The memory cache - caching files as bytebuffers we have loaded into memory locally.
+- The compactor will spike in usage occasionally, though this shouldn't be consistently high.
+- Indexer will open files and write memory out as it goes through.
+- Query memory usage - we do some querying within execute-tx.
+  - Query caches, also? Presumably all on heap.
+- Anything being cached within pgwire? Connection state? Presumably, all on heap. 
+
+== Testing agaist new main
+
+Following current set of changes to introduce Disk Based Joins and move various implementations towards XTs arrow classes, decided to re-run TPCH to see if anything might have changed:
+
+* Pulling the latest of main into this branch.
+* Building the docker image.
+* Running the docker image.
+* Running the same TPCH repro.
+
+So running this:
+
+```
+mkdir -p /tmp/xtdb1
+sudo chown -R 20000:20000 /tmp/xtdb1
+docker run -v /tmp/xtdb1:/var/lib/xtdb \
+    --env XTDB_LOGGING_LEVEL='DEBUG' \
+    --env JDK_JAVA_OPTIONS='-Xmx1000m -Xms1000m -XX:MaxDirectMemorySize=2000m -XX:MaxMetaspaceSize=256m' \
+    --memory="5000m" \
+    -p 5432:5432 -p 8080:8080 \
+    --name="xtdb-oom-test" docker.io/xtdb/xtdb
+```
+
+Yet again - nearly identical in terms of memory usage patterns, and OOMKilled again.
+
+== TODO: Changing the memory cache limit
+
+Currently the memory cache will attempt to use 50% of the direct memory set on the JVM, one thought I did have was to override the config on the docker container and set a lower explicit value in bytes for the memory cache, to see if this would have any impact on the overall memory usage/what is maintained in the page cache.
+
+So, running the same docker command as above, but with the following config file:
+
+```yaml
+xtdb:
+  memory-cache:
+    max-bytes: 524288000 # 500MB
+```
