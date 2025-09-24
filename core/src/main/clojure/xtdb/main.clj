@@ -210,6 +210,27 @@
           (println "Usage: `read-arrow-stream-file <file> [opts]`")
           (System/exit 2))))))
 
+(def read-hash-trie-file-cli-spec
+  [output-file-opt
+   ["-h" "--help"]])
+
+(defn read-hash-trie-file [args]
+  (let [{{:keys [help output-file]} :options} (-> (parse-args args read-hash-trie-file-cli-spec)
+                                                  (handling-arg-errors-or-help))]
+    (if help
+      (do
+        (println "Usage: read-hash-trie-file <file> [opts]")
+        (System/exit 0))
+
+      (if-let [file (first args)]
+        (let [output-method (if output-file (fn [res] (spit output-file (with-out-str (pp/pprint res)))) pp/pprint)]
+          (binding [pp/*print-right-margin* 120]
+            (output-method ((requiring-resolve 'xtdb.arrow/read-hash-trie-file) file))))
+
+        (binding [*out* *err*]
+          (println "Usage: `read-hash-trie-file <file> [opts]`")
+          (System/exit 2))))))
+
 (defn -main [& args]
   (binding [*out* *err*]
     (println (str "Starting " (version-string) " ...")))
@@ -236,6 +257,10 @@
         "read-arrow-stream-file" (do
                                    (read-arrow-stream-file more-args)
                                    (System/exit 0))
+
+        "read-hash-trie-file" (do
+                                (read-hash-trie-file more-args)
+                                (System/exit 0))
 
         ("help" "-h" "--help") (do
                                  (print-help)
