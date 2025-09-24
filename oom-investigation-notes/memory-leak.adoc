@@ -574,3 +574,62 @@ So here's what we see, most importantly:
 
 I believe this supports the theory that we are double counting memory here - the 500MiB buffer is being counted in both the netty direct memory usage AND in the page cache, which will leading to an overestimation of our actual memory usage by Kubernetes.
 
+== Attempt at a fix
+
+Assuming that the issue lies within memory_cache using unpooled buffers, we've made a change in there to grab the same netty allocator used by arrow (PooledByteBufAllocatorL), to ensure that we respect the netty memory limits on creating our buffers in the memory cache. We rebuilt the docker image and then re-ran TPCH against it, so to summarize we run:
+
+```
+mkdir -p /tmp/xtdb1
+sudo chown -R 20000:20000 /tmp/xtdb1
+docker run -v /tmp/xtdb1:/var/lib/xtdb \
+    --env XTDB_LOGGING_LEVEL='DEBUG' \
+    --env JDK_JAVA_OPTIONS='-Xmx1000m -Xms1000m -XX:MaxDirectMemorySize=2000m -XX:MaxMetaspaceSize=256m' \
+    --memory="5000m" \
+    -p 5432:5432 -p 8080:8080 \
+    --name="xtdb-oom-test" docker.io/xtdb/xtdb
+```
+
+This still fails, and the netty memory usage is very similar to as it was before:
+
+image::attempted-fix-memory-usage.png[]
+
+=== Closing The FileChannel
+
+Same as above, but also explicitly using .use() on the filechannel to ensure that also gets closed and doesn't permanently live in the page cache.
+
+Once again, rebuilt the docker image and re-ran. Same result, essentially.
+
+=== Setting memory reservation
+
+Running through with the same changes, we wanted to see if we could "poke" the kernel into clearing up page cache, so we set a memory reservation on the docker container:
+
+```
+mkdir -p /tmp/xtdb1
+sudo chown -R 20000:20000 /tmp/xtdb1
+docker run -v /tmp/xtdb1:/var/lib/xtdb \
+    --env XTDB_LOGGING_LEVEL='DEBUG' \
+    --env JDK_JAVA_OPTIONS='-Xmx1000m -Xms1000m -XX:MaxDirectMemorySize=2000m -XX:MaxMetaspaceSize=256m' \
+    --memory="5000m" \
+    --memory-reservation="3000m" \
+    -p 5432:5432 -p 8080:8080 \
+    --name="xtdb-oom-test" docker.io/xtdb/xtdb
+```
+
+This similarly had essentially no effect - I also MANUALLY attempted to clear the page cache by running:
+
+```
+echo 3 | sudo tee -a /proc/sys/vm/drop_caches
+```
+
+This also had NO effect - the memory_cache values of the page cache remained unchanged.
+
+=== Changes to main
+
+Though the specifics to improve how we're handling memory within the memory_cache didn't have much of an impact on the overall memory usage/preventing OOMKills, I did want to ensure that we had the best possible handling of memory within the memory_cache, so I have merged these changes into main.
+
+== Hypothesis on the Page Cache
+
+My current thinking is that the page cache MUST be considered to be in use by unevictable pages - potentially that something holds open a file handle to the underlying files, which means that the pages cannot be evicted. As for what exactly is holding these files open, I am not sure - this could be something within netty, or arrow, or something with XTDB.
+
+The TPCH process is dying entirely during ingest (currently) - so it's worth considering what may run/use memory during this process.
+
