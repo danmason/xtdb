@@ -664,14 +664,35 @@ docker run -v /tmp/xtdb1:/var/lib/xtdb \
 
 Yet again - nearly identical in terms of memory usage patterns, and OOMKilled again.
 
-== TODO: Changing the memory cache limit
+A view over the whole memory usage here:
 
-Currently the memory cache will attempt to use 50% of the direct memory set on the JVM, one thought I did have was to override the config on the docker container and set a lower explicit value in bytes for the memory cache, to see if this would have any impact on the overall memory usage/what is maintained in the page cache.
+image::tpch-main-memory-usage.png[]
 
-So, running the same docker command as above, but with the following config file:
+== Changing the memory cache limit
+
+Currently the memory cache will attempt to use 50% of the direct memory set on the JVM, as it does by default. 
+
+So, in this test we override the config on the docker container and set a lower explicit value in bytes for the memory cache, to see if this would have any impact on the overall memory usage/what is maintained in the page cache.
+
+So, we build a new version of the standalone docker image, adding the following to `local_config.yaml`:
 
 ```yaml
-xtdb:
-  memory-cache:
-    max-bytes: 524288000 # 500MB
+...
+memoryCache:
+  maxSizeBytes: 536870912
 ```
+
+Running with the same command as we did prior.
+
+Immediately we can see the lower memory cache limit reflected in the XTDB memory metrics:
+
+image::tpch-lower-mem-cache.png[]
+
+Running TPCH against this - again, we see;
+
+* A very similar memory usage pattern
+* Far higher working set memory from cAdvisor than resident set memory - and high amount of page cache.
+* Netty used memory is lower, as expected, due to the lower memory cache limit.
+* Again, OOMKilled.
+
+image:tpch-lower-mem-cache-usage.png[]
