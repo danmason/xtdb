@@ -696,3 +696,197 @@ Running TPCH against this - again, we see;
 * Again, OOMKilled.
 
 image:tpch-lower-mem-cache-usage.png[]
+
+== Turning off compaction
+
+It's not entirely out of the realm of possibility that there is some connection with compaction and open file handles, given that it is writing things down to disk and opening files to do so. In the process of running through ingestion, we run about 80 compaction jobs.
+
+image::compactor-jobs-and-memory.png[]
+
+To eliminate this area as one of concern, I removed the above memory cache limit, and instead disabled compaction entirely by adding the following to `local_config.yaml`:
+
+```yaml
+...
+compactor:
+  threads: 0
+```  
+
+Building the docker image and re-running TPCH against it, we observed that:
+
+* This actually did prevent us getting an OOMKilled, at least during ingestion/subsequent query.
+* The memory cache usage is basically zero UNTIL the query runs now.
+* Subsequent queries fill up the memory cache.
+* The total memory usage is still proportionally higher than the resident set, due to the large page cache.
+* Didn't get an OOMKilled but sat at max memory usage of the container for a long time.
+
+Following this have added this to our TPCH usage namespace to test more queries/fill up the memory cache:
+```clojure
+(with-open [conn (->connection)]
+  (jdbc/execute! conn ["select count(*) from orders;"])
+  (jdbc/execute! conn ["select count(*) from partsupp;"])
+  (jdbc/execute! conn ["select count(*) from lineitem;"]))
+```
+
+=== Post run investigating
+
+Given that the node was still running and 99% or so memory usage, decided to exec into the pod and look at some memory usage there, starting with `cat /proc/meminfo`: 
+
+```
+xtdb@e50eafce2d9a:/usr/local/lib/xtdb$ cat /sys/fs/cgroup/memory.stat
+anon 2998587392
+file 2040004608
+kernel 178003968
+kernel_stack 1277952
+pagetables 7843840
+sec_pagetables 0
+percpu 7344
+sock 0
+vmalloc 32768
+shmem 1986654208
+zswap 161724525
+zswapped 598487040
+file_mapped 23355392
+file_dirty 12288
+file_writeback 0
+swapcached 75448320
+anon_thp 1275068416
+file_thp 0
+shmem_thp 0
+inactive_anon 3517157376
+active_anon 1491390464
+inactive_file 49635328
+active_file 3715072
+unevictable 0
+slab_reclaimable 5943072
+slab_unreclaimable 1158928
+slab 7102000
+workingset_refault_anon 107992
+workingset_refault_file 11602
+workingset_activate_anon 105817
+workingset_activate_file 4582
+workingset_restore_anon 0
+workingset_restore_file 23
+workingset_nodereclaim 0
+pgdemote_kswapd 0
+pgdemote_direct 0
+pgdemote_khugepaged 0
+pgdemote_proactive 0
+pgpromote_success 0
+pgscan 412832
+pgsteal 282953
+pswpin 3347
+pswpout 22808
+pgscan_kswapd 0
+pgscan_direct 412832
+pgscan_khugepaged 0
+pgscan_proactive 0
+pgsteal_kswapd 0
+pgsteal_direct 282953
+pgsteal_khugepaged 0
+pgsteal_proactive 0
+pgfault 653547
+pgmajfault 24159
+pgrefill 38694
+pgactivate 108653
+pgdeactivate 0
+pglazyfree 0
+pglazyfreed 0
+swpin_zero 258
+swpout_zero 8008
+zswpin 104387
+zswpout 250548
+zswpwb 0
+thp_fault_alloc 1070
+thp_collapse_alloc 0
+thp_swpout 19
+thp_swpout_fallback 0
+numa_pages_migrated 0
+numa_pte_updates 0
+numa_hint_faults 0
+```
+
+Of particular note here:
+
+* Unevictable is at  0 - so it doesn't seem like there are any pages that are locked in memory.
+
+This does beg a few questions:
+
+* Is this actually at zero with the compactor on, too? Was I just not seeing this due to not execing into the pod at the right time?
+* Is this only at zero AFTER ingestion has finished, what kind of value does it have during ingestion? 
+* Why is the total memory usage so high, if there are no unevictable pages?
+
+Also, shmem is quite high - 1.9GB - which is "shared memory" - memory that may be simultaneously accessed by multiple processes with an intent to provide communication among them or avoid redundant copies.
+
+We can limit this by setting `--shm-size` on the docker container, so this is something we can try next.
+
+== Limiting shared memory
+
+Back to running with compactor on, we set `--shm-size=512m` on the docker container to limit the amount of shared memory that can be used:
+
+```
+mkdir -p /tmp/xtdb1
+sudo chown -R 20000:20000 /tmp/xtdb1
+docker run -v /tmp/xtdb1:/var/lib/xtdb \
+    --env XTDB_LOGGING_LEVEL='DEBUG' \
+    --env JDK_JAVA_OPTIONS='-Xmx1000m -Xms1000m -XX:MaxDirectMemorySize=2000m -XX:MaxMetaspaceSize=256m' \
+    --memory="5000m" \
+    --shm-size="512m" \
+    -p 5432:5432 -p 8080:8080 \
+    --name="xtdb-oom-test" docker.io/xtdb/xtdb
+```
+
+We then ran TPCH against this - it OOMKilled, and the mid-run /sys/fs/cgroup/memory.stat was interesting too (picking some specific values here):
+```
+anon 2104250368
+file 2203447296
+kernel 923414528
+kernel_stack 1523712
+pagetables 7979008
+vmalloc 32768
+shmem 2063736832 
+inactive_anon 1236643840
+active_anon 2941202432
+inactive_file 139694080
+active_file 16384
+unevictable 0
+workingset_refault_anon 121174
+workingset_refault_file 29342
+workingset_activate_anon 85184
+workingset_activate_file 10
+workingset_restore_anon 125
+workingset_restore_file 0
+workingset_nodereclaim 0
+``` 
+
+shmem is still quite high, so it doesn't seem like limiting this has had much of an effect.
+
+== Deeper memory profiling
+
+Resetting us back to our original memory settings and adding some more detailed memory profiling to the JVM options, we have:
+
+```
+mkdir -p /tmp/xtdb1
+sudo chown -R 20000:20000 /tmp/xtdb1
+docker run -v /tmp/xtdb1:/var/lib/xtdb \
+    --env XTDB_LOGGING_LEVEL='DEBUG' \
+    --env JDK_JAVA_OPTIONS='-Xmx1000m -Xms1000m -XX:MaxDirectMemorySize=2000m -XX:MaxMetaspaceSize=256m -XX:+UnlockDiagnosticVMOptions -XX:+DebugNonSafepoints -XX:+HeapDumpOnOutOfMemoryError -XX:NativeMemoryTracking=summary' \
+    --memory="5000m" \
+    -p 5432:5432 -p 8080:8080 \
+    --name="xtdb-oom-test" docker.io/xtdb/xtdb
+```
+
+I run TPCH against this, and then use a few commands against the pod to gather memory usage information:
+
+* jcmd 1 VM.native_memory summary
+* cat /proc/1/smaps
+
+```
+docker exec xtdb-oom-test cat /proc/1/smaps > smaps
+docker exec xtdb-oom-test jcmd 1 VM.native_memory summary > nmt-summary
+```
+
+From these:
+
+* NMT summary didn't reveal anything particularly interesting, equaling around the size of the resident set memory.
+
+
