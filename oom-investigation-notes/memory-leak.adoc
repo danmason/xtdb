@@ -953,3 +953,9 @@ image::setting-memory-spike.png[]
 Same as above but setting `memory.high` even lower, to 3GB, we see the following memory usage:
 
 image::setting-memory-high-3gb.png[]
+
+This actually avoids the OOMKilled - though the node DOES again see a memory spike - after this point, the node acts VERY slowly, processing transactions at a very slow rate.
+
+Also - it eventually becomes impossible to exec anything against the pod.
+
+Setting memory.high to 4GB - the pod starts moving again. Believe this comes down to the process being entirely throttled by our memory.high limit.
