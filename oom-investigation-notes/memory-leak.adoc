@@ -889,4 +889,37 @@ From these:
 
 * NMT summary didn't reveal anything particularly interesting, equaling around the size of the resident set memory.
 
+== Memory Reclaim Test
 
+Given that the page cache is so high, I wanted to see if we could manually clear it out while the node was running, to see if this would have any effect on the overall memory usage or prevent OOMKills.
+
+Running against our edge docker image:
+
+```
+mkdir -p /tmp/xtdb1
+sudo chown -R 20000:20000 /tmp/xtdb1
+docker run -v /tmp/xtdb1:/var/lib/xtdb \
+    --env XTDB_LOGGING_LEVEL='DEBUG' \
+    --env JDK_JAVA_OPTIONS='-Xmx1000m -Xms1000m -XX:MaxDirectMemorySize=2000m -XX:MaxMetaspaceSize=256m' \
+    --memory="5000m" \
+    -p 5432:5432 -p 8080:8080 \
+    --name="xtdb-oom-test" \
+    --privileged \
+    --pull=always ghcr.io/xtdb/xtdb:edge 
+```
+
+We kick off TPCH as normal, and then when the total k8s memory begins to approach the limit, we exec into the pod and run:
+
+```
+docker exec xtdb-oom-test sh -c 'echo 2G > /sys/fs/cgroup/memory.reclaim'
+```
+
+I ran this a few times - it didn't seem to have MUCH of an effect, and we still hit OOMKills:
+
+image::manual-clear-page-cache.png[]
+
+I would have expected the page cache to drop down significantly - ie, by 2GB - but it didn't seem to have that much of an effect, and any drop in page cache was temporary, and it quickly climbed back up again.
+
+We saw similar beforehand when trying to manually clear the page cache by writing to `/proc/sys/vm/drop_caches`.
+
+I find it odd that I've seen unevictable pages at 0 when checking memory.stat, and yet the page cache remains so high and doesn't seem to ACT as if it can be cleared out.
