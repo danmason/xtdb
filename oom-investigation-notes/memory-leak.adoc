@@ -923,3 +923,33 @@ I would have expected the page cache to drop down significantly - ie, by 2GB - b
 We saw similar beforehand when trying to manually clear the page cache by writing to `/proc/sys/vm/drop_caches`.
 
 I find it odd that I've seen unevictable pages at 0 when checking memory.stat, and yet the page cache remains so high and doesn't seem to ACT as if it can be cleared out.
+
+== Working with cgroup
+
+Wondering if potentially been looking at the wrong folder, I checked the cgroup directories on the host machine - from what we can see, the docker containers slice is under `/sys/fs/cgroup/system.slice/docker-<containerid>.scope` - there are MORE files under here than I saw on the pod itself, including `memory.high` - contents of this:
+
+```
+max
+```
+
+For the sake of testing, I ran the node and then set this to 4GB:
+
+```
+echo 4G | sudo tee /sys/fs/cgroup/system.slice/docker-d9c0def9bc811b165641141b87de6dcb13fc8a6a86745cbcfb41ad6d645bb13f.scope/memory.high
+```
+
+Doing TPCH again, we saw the following memory usage:
+
+image::setting-memory-high.png[]
+
+This again did NOT prevent an OOMKill, though we do see the memory usage actually hovers around 4GB for a lot of the time, so it does seem to be having some effect.
+
+Seems like at the end it hits something that causes a spike in memory usage, which then OOMKills it  - what actually causes that to happen is a bit of a mystery, and we don't get much info from our node metrics when it DOES happen:
+
+image::setting-memory-spike.png[]
+
+=== Setting memory.high even lower
+
+Same as above but setting `memory.high` even lower, to 3GB, we see the following memory usage:
+
+image::setting-memory-high-3gb.png[]
