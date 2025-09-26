@@ -959,3 +959,43 @@ This actually avoids the OOMKilled - though the node DOES again see a memory spi
 Also - it eventually becomes impossible to exec anything against the pod.
 
 Setting memory.high to 4GB - the pod starts moving again. Believe this comes down to the process being entirely throttled by our memory.high limit.
+
+== MALLOC_ARENA_MAX
+
+Came across this blog which was of interest: https://thehftguy.com/tag/malloc_arena_max/
+
+There is essentially some form of leak within glibc malloc implementation, which is used by netty, which anecdotally seems to cause OOMs on memory limited environments.
+
+So, setting MALLOC_ARENA_MAX to 4:
+
+```
+docker run --env MALLOC_ARENA_MAX='4' \
+    --env XTDB_LOGGING_LEVEL='DEBUG' \
+    --env JDK_JAVA_OPTIONS='-Xmx1000m -Xms1000m -XX:MaxDirectMemorySize=2000m -XX:MaxMetaspaceSize=256m' \
+    --memory="5000m" \
+    -p 5432:5432 -p 8080:8080 \
+    --name="xtdb-oom-test" docker.io/xtdb/xtdb
+```
+
+I ran through my TPCH scale factor 0.5 and then some queries, and it did NOT OOMKill.
+
+Indeed, I ran a second TPCH load of scale factor 0.5 on the same node and that also did not OOMKill.
+
+Memory usage below:
+
+image::malloc-arena-max.png[]
+
+We can see that the total memory usage DOES sit at the limit (perhaps not surprising given the memory.high setting), but we don't see the OOMKill.
+
+To test this further I set an even lower memory limit on Docker and ran the TPCH SF 0.5 again:
+
+```
+docker run --env MALLOC_ARENA_MAX='4' \
+    --env XTDB_LOGGING_LEVEL='DEBUG' \
+    --env JDK_JAVA_OPTIONS='-Xmx1000m -Xms1000m -XX:MaxDirectMemorySize=2000m -XX:MaxMetaspaceSize=256m' \
+    --memory="4000m" \
+    -p 5432:5432 -p 8080:8080 \
+    --name="xtdb-oom-test" docker.io/xtdb/xtdb
+```
+
+This ALSO didn't OOMKill!
