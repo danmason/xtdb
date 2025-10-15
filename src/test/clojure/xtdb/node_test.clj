@@ -1265,3 +1265,23 @@ VALUES(1, OBJECT (foo: OBJECT(bibble: true), bar: OBJECT(baz: 1001)))"]])
     (xt/execute-tx tu/*node* [[:put-docs :docs {:xt/id 9 :a ["\n" "\t" "\r"]}]])
     (t/is (= [{:xt/id 9 :a ["\n" "\t" "\r"]}]
              (xt/q tu/*node* "SELECT * FROM docs WHERE _id = 9")))))
+
+(t/deftest delete-mixed-record-id-types-4876
+  (with-open [node (xtn/start-node {:log [:in-memory {:instant-src (tu/->mock-clock)}]
+                                    :compactor {:threads 0}})]
+
+    #_(t/testing "xtql"
+      (xt/execute-tx node [[:put-docs :docs {:xt/id 0} {:xt/id "foo"} {:xt/id :bar} {:xt/id #uuid "a3a3690b-e3a7-4e62-b03e-69cf9982ebd3"}]])
+      (t/is (= (set [{:xt/id 0} {:xt/id "foo"} {:xt/id :bar} {:xt/id #uuid "a3a3690b-e3a7-4e62-b03e-69cf9982ebd3"}])
+               (set (xt/q node "SELECT * FROM docs"))))
+
+      (xt/execute-tx node [[:delete-docs :docs 0 "foo" :bar #uuid "a3a3690b-e3a7-4e62-b03e-69cf9982ebd3"]])
+      (t/is (empty? (xt/q node "SELECT * FROM docs"))))
+
+    (t/testing "sql"
+      (xt/execute-tx node [[:sql "INSERT INTO docs2 (_id) VALUES (?)" [0] ["foo"] [:bar] [#uuid "a3a3690b-e3a7-4e62-b03e-69cf9982ebd3"]]]) 
+      (t/is (= (set [{:xt/id 0} {:xt/id "foo"} {:xt/id :bar} {:xt/id #uuid "a3a3690b-e3a7-4e62-b03e-69cf9982ebd3"}])
+               (set (xt/q node "SELECT * FROM docs2"))))
+
+      (xt/execute-tx node [[:sql "DELETE FROM docs2 WHERE _id = ?" [0] ["foo"] [:bar] [#uuid "a3a3690b-e3a7-4e62-b03e-69cf9982ebd3"]]])
+      (t/is (empty? (xt/q node "SELECT * FROM docs2"))))))
