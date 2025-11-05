@@ -52,13 +52,13 @@ class MemoryCacheTest {
             assertAll("get t1", {
                 val onEvict = AutoCloseable { t1Evicted = true }
 
-                cache.get(Path.of("t1/100"), Slice(0, 100)) { completedFuture(it to onEvict) }.use { b1 ->
+                cache.get(Path.of("t1/100"), Slice(0, 100)) { it to onEvict }.use { b1 ->
                     assertEquals(1, b1.getByte(0))
 
                     assertEquals(MemoryCache.Stats(100L, 150L), cache.stats0)
                 }
 
-                cache.get(Path.of("t1/100"), Slice(0, 100)) { completedFuture(it to onEvict) }.use { b1 ->
+                cache.get(Path.of("t1/100"), Slice(0, 100)) { it to onEvict }.use { b1 ->
                     assertEquals(2, b1.getByte(0))
                 }
 
@@ -73,7 +73,7 @@ class MemoryCacheTest {
                 val onEvict = AutoCloseable { t2Evicted = true }
 
                 val path = Path.of("t2/50")
-                cache.get(path, Slice(0, 50)) { completedFuture(it to onEvict) }.use { b1 ->
+                cache.get(path, Slice(0, 50)) { it to onEvict }.use { b1 ->
                     assertEquals(3, b1.getByte(0))
 
                     assertEquals(MemoryCache.Stats(50, 200), cache.stats0)
@@ -87,7 +87,7 @@ class MemoryCacheTest {
             assertTrue(t2Evicted)
 
             assertAll("t3 evicts t2/t1", {
-                cache.get(Path.of("t3/170"), Slice(0, 170)) { completedFuture(it to null) }.use { b1 ->
+                cache.get(Path.of("t3/170"), Slice(0, 170)) { it to null }.use { b1 ->
                     assertEquals(4, b1.getByte(0))
                     assertTrue(t1Evicted)
 
@@ -117,14 +117,14 @@ class MemoryCacheTest {
         MemoryCache(allocator, 100, PathLoader()).use { cache ->
             assertThrows(OutOfMemoryException::class.java) {
                 unwrapCause {
-                    cache.get(Path.of("t1/200"), Slice(0, 200)) { k -> completedFuture(k to null) }.use { }
+                    cache.get(Path.of("t1/200"), Slice(0, 200)) { k -> k to null }.use { }
                 }
             }
 
             assertAll(
                 "only takes a slice of a bigger file",
                 {
-                    cache.get(Path.of("t1/200"), Slice(0, 50)) { k -> completedFuture(k to null) }.use { b1 ->
+                    cache.get(Path.of("t1/200"), Slice(0, 50)) { k -> k to null }.use { b1 ->
                         assertEquals(2, b1.getByte(0))
                     }
                 }
@@ -133,12 +133,12 @@ class MemoryCacheTest {
             assertAll(
                 "but too many slices OOMs too",
                 {
-                    cache.get(Path.of("t1/200"), Slice(0, 75)) { k -> completedFuture(k to null) }.use { b1 ->
+                    cache.get(Path.of("t1/200"), Slice(0, 75)) { k -> k to null }.use { b1 ->
                         assertEquals(3, b1.getByte(0))
 
                         assertThrows(OutOfMemoryException::class.java) {
                             unwrapCause {
-                                cache.get(Path.of("t1/200"), Slice(75, 75)) { k -> completedFuture(k to null) }.use {}
+                                cache.get(Path.of("t1/200"), Slice(75, 75)) { k -> k to null }.use {}
                             }
                         }
                     }

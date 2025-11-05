@@ -26,7 +26,6 @@ import java.nio.file.Files.newByteChannel
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption.*
-import java.util.concurrent.CompletableFuture.completedFuture
 import kotlin.io.path.*
 
 internal class LocalStorage(
@@ -67,7 +66,7 @@ internal class LocalStorage(
                 .resolve(cacheRootPath.relativize(path))
                 .orThrowIfMissing(key)
 
-            completedFuture(Pair(bufferCachePath, null))
+            Pair(bufferCachePath, null)
         }.use { it.toByteArray() }
 
     override fun getFooter(key: Path): ArrowFooter =
@@ -95,7 +94,7 @@ internal class LocalStorage(
                 rootPath.resolve(cacheRootPath.relativize(path))
                     .takeIf { it.exists() } ?: throw objectMissingException(path)
 
-            completedFuture(Pair(bufferCachePath, null))
+            Pair(bufferCachePath, null)
         }.use { arrowBuf ->
             arrowBuf.arrowBufToRecordBatch(
                 0,

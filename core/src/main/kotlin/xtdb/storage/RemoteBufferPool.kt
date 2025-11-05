@@ -117,7 +117,7 @@ internal class RemoteBufferPool(
             diskCache.get(path) { k, tmpFile ->
                 diskCacheMisses?.increment()
                 getObject(cacheRootPath.relativize(k), tmpFile)
-            }.thenApply { entry -> Pair(entry.path, entry) }
+            }.thenApply { entry -> Pair(entry.path, entry) }.await()
         }.use { it.toByteArray() }
 
     override fun getFooter(key: Path): ArrowFooter = arrowFooterCache.get(key) {
@@ -144,7 +144,7 @@ internal class RemoteBufferPool(
             diskCache.get(path) { k, tmpFile ->
                 diskCacheMisses?.increment()
                 getObject(cacheRootPath.relativize(k), tmpFile)
-            }.thenApply { entry -> Pair(entry.path, entry) }
+            }.thenApply { entry -> Pair(entry.path, entry) }.await()
         }.use { arrowBuf ->
             arrowBuf.arrowBufToRecordBatch(
                 0, arrowBlock.metadataLength, arrowBlock.bodyLength,
