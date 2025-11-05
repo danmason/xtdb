@@ -7,12 +7,12 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 import xtdb.cache.MemoryCache.Slice
 import java.lang.foreign.Arena
 import java.lang.foreign.MemorySegment
 import java.lang.foreign.ValueLayout.JAVA_BYTE
 import java.nio.file.Path
-import java.util.concurrent.CompletableFuture.completedFuture
 import java.util.concurrent.ExecutionException
 
 class MemoryCacheTest {
@@ -47,24 +47,31 @@ class MemoryCacheTest {
 
         MemoryCache(allocator, 250, PathLoader()).use { cache ->
 
-            var t1Evicted = false
+            var t1Evicted = 0
 
             assertAll("get t1", {
-                val onEvict = AutoCloseable { t1Evicted = true }
+                val onEvict = AutoCloseable { t1Evicted++ }
 
                 cache.get(Path.of("t1/100"), Slice(0, 100)) { it to onEvict }.use { b1 ->
                     assertEquals(1, b1.getByte(0))
 
                     assertEquals(MemoryCache.Stats(100L, 150L), cache.stats0)
+
+                    cache.get(Path.of("t1/100"), Slice(0, 100)) { it to onEvict }.use { b1 ->
+                        assertEquals(1, b1.getByte(0))
+
+                        assertEquals(MemoryCache.Stats(100L, 150L), cache.stats0)
+                    }
                 }
+
+                assertEquals(1, t1Evicted)
 
                 cache.get(Path.of("t1/100"), Slice(0, 100)) { it to onEvict }.use { b1 ->
                     assertEquals(2, b1.getByte(0))
                 }
 
-                Thread.sleep(50)
                 assertEquals(MemoryCache.Stats(0, 250), cache.stats0)
-                assertTrue(t1Evicted)
+                assertEquals(2, t1Evicted)
             })
 
             var t2Evicted = false
@@ -83,13 +90,13 @@ class MemoryCacheTest {
                 assertEquals(MemoryCache.Stats(0L, 250L), cache.stats0)
             })
 
-            assertTrue(t1Evicted)
+            assertEquals(2, t1Evicted)
             assertTrue(t2Evicted)
 
             assertAll("t3 evicts t2/t1", {
                 cache.get(Path.of("t3/170"), Slice(0, 170)) { it to null }.use { b1 ->
                     assertEquals(4, b1.getByte(0))
-                    assertTrue(t1Evicted)
+                    assertEquals(2, t1Evicted)
 
                     // definitely needs to evict t1, may or may not evict t2
                     val stats = cache.stats0
@@ -144,6 +151,32 @@ class MemoryCacheTest {
                     }
                 }
             )
+        }
+    }
+
+    @Test
+    fun `getting same path multiple times doesn't increase usedBytes`() {
+        MemoryCache(allocator, 200, PathLoader()).use { cache ->
+            val path = Path.of("test/100")
+            val slice = Slice(0, 100)
+
+            cache.get(path, slice) { it to null }.use {
+                assertEquals(100, cache.stats0.usedBytes)
+
+                cache.get(path, slice) { it to null }.use {
+                    // previously came back as 200 usedBytes, because we didn't actually cache anything
+                    assertEquals(100, cache.stats0.usedBytes)
+
+                    cache.get(path, slice) { it to null }.use {
+                        assertEquals(100, cache.stats0.usedBytes)
+                        // Fails -> throws an OOM error!
+                    }
+                }
+            }
+
+            val stats = cache.stats0
+            assertEquals(0, stats.usedBytes)
+            assertEquals(200, stats.freeBytes)
         }
     }
 }
