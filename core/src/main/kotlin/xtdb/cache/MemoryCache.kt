@@ -31,7 +31,8 @@ import kotlin.io.path.fileSize
 class MemoryCache @JvmOverloads internal constructor(
     al: BufferAllocator,
     maxSizeBytes: Long,
-    private val pathLoader: PathLoader = PathLoader()
+    private val pathLoader: PathLoader = PathLoader(),
+    private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : AutoCloseable {
     private val cacheAl = al.newChildAllocator("memory-cache", 0, maxSizeBytes)
 
@@ -84,7 +85,7 @@ class MemoryCache @JvmOverloads internal constructor(
         }
 
     private val fetchParentJob = Job()
-    private val scope = CoroutineScope(SupervisorJob(fetchParentJob) + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob(fetchParentJob) + dispatcher)
 
     private sealed interface FetchChEvent
 
