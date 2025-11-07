@@ -8,6 +8,7 @@
            (io.micrometer.core.instrument.binder.jvm ClassLoaderMetrics JvmGcMetrics JvmHeapPressureMetrics JvmMemoryMetrics JvmThreadMetrics)
            (io.micrometer.core.instrument.binder.system ProcessorMetrics)
            (io.micrometer.prometheusmetrics PrometheusConfig PrometheusMeterRegistry)
+           (io.micrometer.tracing Tracer Span Span$Builder)
            java.util.List
            (java.util.stream Stream)
            (org.apache.arrow.memory BufferAllocator)))
@@ -53,6 +54,47 @@
 
 (defn add-allocator-gauge [reg meter-name ^BufferAllocator allocator]
   (add-gauge reg meter-name (fn [] (.getAllocatedMemory allocator)) {:unit "bytes"}))
+
+(defn start-span
+  "Start a new span with the given tracer and name. Returns the span.
+  Optionally accepts a map of attributes to add to the span."
+  (^io.micrometer.tracing.Span [^Tracer tracer span-name]
+   (start-span tracer span-name nil))
+  (^io.micrometer.tracing.Span [^Tracer tracer span-name attributes]
+   (when tracer
+     (let [span (-> (.nextSpan tracer)
+                    (.name span-name)
+                    (.start))]
+       (when attributes
+         (doseq [[k v] attributes]
+           (.tag span (name k) (str v))))
+       span))))
+
+(defn end-span
+  "End a span."
+  [^Span span]
+  (when span
+    (.end span)))
+
+(defmacro with-span
+  "Execute body within a tracing span. The span is automatically ended when the body completes.
+  Optionally accepts a map of attributes as the third argument."
+  [tracer span-name & body]
+  ;; Check if first element is a map form (either a literal map or a map expression)
+  (let [first-form (first body)
+        map-literal? (and (seq? first-form) (= 'quote (first first-form))
+                          (map? (second first-form)))
+        attributes (if (or (map? first-form) map-literal?)
+                     first-form
+                     nil)
+        body (if attributes (rest body) body)]
+    `(if-let [tracer# ~tracer]
+       (let [span# (start-span tracer# ~span-name ~attributes)]
+         (try
+           ~@body
+           (finally
+             (end-span span#))))
+       (do ~@body))))
 
 (defn direct-memory-pool ^java.lang.management.BufferPoolMXBean []
   (->> (java.lang.management.ManagementFactory/getPlatformMXBeans java.lang.management.BufferPoolMXBean)
