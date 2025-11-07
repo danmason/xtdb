@@ -149,11 +149,17 @@ class MemoryCache @JvmOverloads internal constructor(
                         cacheAl.wrapForeignAllocation(
                             object : ForeignAllocation(memSeg.byteSize(), memSeg.address()) {
                                 override fun release0() {
+                                    LOGGER.trace("release0: Starting release for $pathSlice (thread=${Thread.currentThread().name})")
                                     arena.close()
+                                    LOGGER.trace("release0: Arena closed for $pathSlice")
                                     onEvict?.close()
-                                    openSlices.computeIfPresent(pathSlice) { _, buf ->
-                                        buf.takeIf { it.referenceManager.refCount > 0 }
+                                    LOGGER.trace("release0: onEvict called for $pathSlice")
+                                    val removed = openSlices.computeIfPresent(pathSlice) { _, buf ->
+                                        val refCount = buf.referenceManager.refCount
+                                        LOGGER.trace("release0: openSlices.computeIfPresent for $pathSlice (refCount=$refCount)")
+                                        buf.takeIf { refCount > 0 }
                                     }
+                                    LOGGER.trace("release0: Finished release for $pathSlice (removed=$removed, allocatedMemory=${cacheAl.allocatedMemory})")
                                 }
                             })
                     }

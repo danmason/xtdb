@@ -10,14 +10,18 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.RepeatedTest
 import org.junit.jupiter.api.Test
 import xtdb.cache.MemoryCache.Slice
+import xtdb.util.requiringResolve
 import java.lang.Thread.sleep
 import java.lang.foreign.Arena
 import java.lang.foreign.MemorySegment
 import java.lang.foreign.ValueLayout.JAVA_BYTE
 import java.nio.file.Path
 import java.util.concurrent.ExecutionException
+
+private val setLogLevel = requiringResolve("xtdb.logging/set-log-level!")
 
 class MemoryCacheTest {
 
@@ -26,6 +30,7 @@ class MemoryCacheTest {
     @BeforeEach
     fun setUp() {
         allocator = RootAllocator()
+        setLogLevel.invoke("xtdb.cache.MemoryCache", "TRACE")
     }
 
     @AfterEach
@@ -41,7 +46,7 @@ class MemoryCacheTest {
                 .also { it.set(JAVA_BYTE, 0, (++idx).toByte()) }
     }
 
-    @Test
+    @RepeatedTest(10000)
     fun `test memory cache`() = runTest {
         // just a starter-for-ten here, intent is that we go further down the property/deterministic testing route
         // significantly exercised E2E by the rest of the test-suite and benchmarks.
@@ -66,17 +71,19 @@ class MemoryCacheTest {
 
                         assertEquals(MemoryCache.Stats(100L, 150L), cache.stats0)
                     }
+                    println("TEST: After inner t1/100 .use {} completed (thread=${Thread.currentThread().name})")
                 }
-
-                sleep(10)
+                println("TEST: After outer t1/100 .use {} completed (thread=${Thread.currentThread().name})")
                 assertEquals(1, t1Evicted)
 
                 cache.get(Path.of("t1/100"), Slice(0, 100)) { it to onEvict }.use { b1 ->
                     assertEquals(2, b1.getByte(0))
                 }
+                println("TEST: After second t1/100 .use {} completed (thread=${Thread.currentThread().name})")
 
-                sleep(10)
-                assertEquals(MemoryCache.Stats(0, 250), cache.stats0)
+                val stats = cache.stats0
+                println("TEST: After yield, stats=$stats, t1Evicted=$t1Evicted")
+                assertEquals(MemoryCache.Stats(0, 250), stats)
                 assertEquals(2, t1Evicted)
             }
 
@@ -93,10 +100,12 @@ class MemoryCacheTest {
                     assertEquals(MemoryCache.Stats(50, 200), cache.stats0)
                 }
 
-                sleep(10)
+                println("TEST: After .use {} completed for t2/50, checking stats (thread=${Thread.currentThread().name})")
+                val stats = cache.stats0
+                println("TEST: Got stats: $stats, t2Evicted=$t2Evicted")
                 assertTrue(t2Evicted)
                 assertEquals(2, t1Evicted)
-                assertEquals(MemoryCache.Stats(0L, 250L), cache.stats0)
+                assertEquals(MemoryCache.Stats(0L, 250L), stats)
             }
         }
     }
