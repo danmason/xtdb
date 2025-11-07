@@ -13,8 +13,9 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.RepeatedTest
 import org.junit.jupiter.api.Test
 import xtdb.cache.MemoryCache.Slice
+import xtdb.util.logger
 import xtdb.util.requiringResolve
-import java.lang.Thread.sleep
+import xtdb.util.trace
 import java.lang.foreign.Arena
 import java.lang.foreign.MemorySegment
 import java.lang.foreign.ValueLayout.JAVA_BYTE
@@ -22,6 +23,7 @@ import java.nio.file.Path
 import java.util.concurrent.ExecutionException
 
 private val setLogLevel = requiringResolve("xtdb.logging/set-log-level!")
+private val LOGGER = MemoryCacheTest::class.logger
 
 class MemoryCacheTest {
 
@@ -31,6 +33,7 @@ class MemoryCacheTest {
     fun setUp() {
         allocator = RootAllocator()
         setLogLevel.invoke("xtdb.cache.MemoryCache", "TRACE")
+        setLogLevel.invoke("xtdb.cache.MemoryCacheTest", "TRACE")
     }
 
     @AfterEach
@@ -71,18 +74,18 @@ class MemoryCacheTest {
 
                         assertEquals(MemoryCache.Stats(100L, 150L), cache.stats0)
                     }
-                    println("TEST: After inner t1/100 .use {} completed (thread=${Thread.currentThread().name})")
+                    LOGGER.trace("TEST: After inner t1/100 .use {} completed (thread=${Thread.currentThread().name})")
                 }
-                println("TEST: After outer t1/100 .use {} completed (thread=${Thread.currentThread().name})")
+                LOGGER.trace("TEST: After outer t1/100 .use {} completed (thread=${Thread.currentThread().name})")
                 assertEquals(1, t1Evicted)
 
                 cache.get(Path.of("t1/100"), Slice(0, 100)) { it to onEvict }.use { b1 ->
                     assertEquals(2, b1.getByte(0))
                 }
-                println("TEST: After second t1/100 .use {} completed (thread=${Thread.currentThread().name})")
+                LOGGER.trace("TEST: After second t1/100 .use {} completed (thread=${Thread.currentThread().name})")
 
                 val stats = cache.stats0
-                println("TEST: After yield, stats=$stats, t1Evicted=$t1Evicted")
+                LOGGER.trace("TEST: Checking stats=$stats, t1Evicted=$t1Evicted")
                 assertEquals(MemoryCache.Stats(0, 250), stats)
                 assertEquals(2, t1Evicted)
             }
@@ -100,9 +103,9 @@ class MemoryCacheTest {
                     assertEquals(MemoryCache.Stats(50, 200), cache.stats0)
                 }
 
-                println("TEST: After .use {} completed for t2/50, checking stats (thread=${Thread.currentThread().name})")
+                LOGGER.trace("TEST: After .use {} completed for t2/50, checking stats (thread=${Thread.currentThread().name})")
                 val stats = cache.stats0
-                println("TEST: Got stats: $stats, t2Evicted=$t2Evicted")
+                LOGGER.trace("TEST: Got stats=$stats, t2Evicted=$t2Evicted")
                 assertTrue(t2Evicted)
                 assertEquals(2, t1Evicted)
                 assertEquals(MemoryCache.Stats(0L, 250L), stats)

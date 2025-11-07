@@ -170,12 +170,30 @@ class MemoryCache @JvmOverloads internal constructor(
 
                 try {
                     openSlices[pathSlice] = buf
+
+                    var first = true
                     reqs?.forEach {
                         buf.referenceManager.retain()
-                        LOGGER.trace("FetchDone: Completing awaiter for $pathSlice")
-                        if (!it.complete(buf)) buf.referenceManager.release()
+                        LOGGER.trace("FetchDone: Completing awaiter for $pathSlice (refCnt now ${buf.refCnt()})")
+
+                        if (first) {
+                            // First awaiter takes ownership of the initial reference
+                            buf.referenceManager.release()
+                            LOGGER.trace("FetchDone: Released initial ref, first awaiter now owns it (refCnt now ${buf.refCnt()})")
+                            first = false
+                        }
+
+                        if (!it.complete(buf)) {
+                            LOGGER.trace("FetchDone: Awaiter already completed, releasing ref")
+                            buf.referenceManager.release()
+                        }
                     }
-                    buf.referenceManager.release()
+
+                    // If there were no awaiters (shouldn't happen in practice), release the initial ref
+                    if (first) {
+                        LOGGER.trace("FetchDone: No awaiters, releasing initial ref")
+                        buf.referenceManager.release()
+                    }
                 } catch (t: Throwable) {
                     buf.close()
                     throw t
