@@ -67,10 +67,9 @@ dependencies {
     // monitoring
     api(libs.micrometer.core)
     api(libs.micrometer.registry.prometheus)
-    api(libs.micrometer.tracing)
-    api(libs.micrometer.tracing.bridge.otel)
-    api(libs.opentelemetry.exporter.otlp)
-    api(libs.opentelemetry.sdk)
+    api(libs.clj.otel.api)
+    api(libs.clj.otel.sdk)
+    api(libs.clj.otel.exporter.otlp)
 
     api(kotlin("stdlib"))
     api(libs.kotlinx.coroutines)
@@ -89,8 +88,6 @@ dependencies {
     testImplementation(libs.mockk)
     testImplementation(libs.kotest.props)
     testImplementation(libs.clojure.test.check)
-    testImplementation(libs.opentelemetry.sdk.testing)
-    testImplementation(libs.micrometer.tracing.test)
     testImplementation(testFixtures(project(":")))
     testImplementation(project(":xtdb-main"))
     testImplementation(project(":modules:xtdb-kafka"))

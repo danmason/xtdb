@@ -1,64 +1,28 @@
 (ns xtdb.otel
+  "OpenTelemetry tracing support for XTDB using clj-otel"
   (:require [clojure.tools.logging :as log]
             [integrant.core :as ig]
+            [steffan-westcott.clj-otel.sdk.otel-sdk :as otel-sdk]
+            [steffan-westcott.clj-otel.exporter.otlp.grpc.trace :as otlp-grpc]
             [xtdb.node :as xtn])
-  (:import (io.micrometer.tracing.otel.bridge OtelTracer OtelCurrentTraceContext OtelTracer$EventPublisher)
-           (io.opentelemetry.api.common Attributes)
-           (io.opentelemetry.sdk OpenTelemetrySdk)
-           (io.opentelemetry.sdk.resources Resource)
-           (io.opentelemetry.sdk.trace SdkTracerProvider)
-           (io.opentelemetry.sdk.trace.export SimpleSpanProcessor)
-           (io.opentelemetry.exporter.otlp.trace OtlpGrpcSpanExporter)
-           (io.opentelemetry.semconv ResourceAttributes)
-           (xtdb.api Xtdb$Config)
+  (:import (xtdb.api Xtdb$Config)
            (xtdb.api.metrics OtelConfig)))
 
-(defn noop-event-publisher
-  []
-  (reify OtelTracer$EventPublisher
-    (publishEvent [_ _])))
+(defn create-otel-sdk
+  "Create and configure an OpenTelemetry SDK instance.
 
-(defn create-tracer
-  [{:keys [enabled? endpoint service-name span-processor]
-    :or {enabled? false
-         service-name "xtdb"}}]
+  Options:
+    :enabled? - Enable tracing (default: false)
+    :endpoint - OTLP endpoint (e.g., 'http://localhost:4317')
+    :service-name - Service name for traces (default: 'xtdb')"
+  [{:keys [enabled? endpoint service-name]}]
   (when enabled?
-    (try
-      (let [;; Create a Resource with the service name
-            resource (-> (Resource/getDefault)
-                         (.merge (Resource/create
-                                   (-> (Attributes/builder)
-                                       (.put ResourceAttributes/SERVICE_NAME service-name)
-                                       (.build)))))
-
-            processor (or span-processor
-                          (let [builder (cond-> (OtlpGrpcSpanExporter/builder)
-                                          endpoint (.setEndpoint endpoint))]
-                            (SimpleSpanProcessor/create (.build builder))))
-
-            tracer-provider (-> (SdkTracerProvider/builder)
-                                (.setResource resource)
-                                (.addSpanProcessor processor)
-                                (.build))
-
-            otel-sdk       (-> (OpenTelemetrySdk/builder)
-                               (.setTracerProvider tracer-provider)
-                               (.build))
-
-            otel-tracer    (.getTracer otel-sdk "xtdb")
-
-            current-ctx    (OtelCurrentTraceContext.)
-            event-pub      (noop-event-publisher)]
-
-        (log/infof "OpenTelemetry tracer created for service: %s" service-name)
-
-        (OtelTracer. otel-tracer current-ctx event-pub))
-
-      (catch Exception e
-        (log/warnf e "Failed to create OpenTelemetry tracer, tracing will be disabled")
-        nil))))
-
-
+    (let [span-exporter (otlp-grpc/span-exporter {:endpoint endpoint})
+          sdk (otel-sdk/init-otel-sdk!
+               service-name
+               {:tracer-provider {:span-processors [{:exporters [span-exporter]}]}})]
+      (log/infof "OpenTelemetry SDK created for service: %s" service-name)
+      sdk)))
 
 (defmethod xtn/apply-config! :xtdb/otel [^Xtdb$Config config _
                                                       {:keys [enabled? endpoint service-name]}]
@@ -71,15 +35,14 @@
 (defmethod ig/expand-key :xtdb/otel [k ^OtelConfig config]
   {k {:enabled? (.getEnabled config)
       :endpoint (.getEndpoint config)
-      :service-name (.getServiceName config)
-      :config (ig/ref :xtdb/config)}})
+      :service-name (.getServiceName config)}})
 
-(defmethod ig/init-key :xtdb/otel [_ {:keys [enabled? endpoint service-name] {:keys [node-id]} :config}]
-  (let [service-name (or service-name (str "xtdb-" node-id))]
-    (create-tracer {:enabled? enabled?
+(defmethod ig/init-key :xtdb/otel [_ {:keys [enabled? endpoint service-name]}]
+  (create-otel-sdk {:enabled? enabled?
                     :endpoint endpoint
-                    :service-name service-name})))
+                    :service-name service-name}))
 
-(defmethod ig/halt-key! :xtdb/otel [_ tracer]
-  ;; Tracer cleanup is handled by the underlying SDK
-  nil)
+(defmethod ig/halt-key! :xtdb/otel [_ sdk]
+  (when sdk
+    (otel-sdk/close-otel-sdk! sdk)
+    (log/info "OpenTelemetry SDK shut down")))

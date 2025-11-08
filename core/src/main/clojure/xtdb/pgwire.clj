@@ -6,6 +6,7 @@
             [cognitect.anomalies :as-alias anom]
             [cognitect.transit :as transit]
             [integrant.core :as ig]
+            [steffan-westcott.clj-otel.api.trace.span :as span]
             [xtdb.antlr :as antlr]
             [xtdb.api :as xt]
             [xtdb.authn :as authn]
@@ -1377,10 +1378,8 @@
               (cmd-commit conn)
               (pgio/cmd-write-msg conn pgio/msg-command-complete {:command "COMMIT"}))
 
-    (:query :show-variable) (let [query-tracer (:query-tracer conn)
-                                   query-str (:query portal)]
-                              (metrics/with-span query-tracer "pgwire.query"
-                                {:db.statement query-str}
+    (:query :show-variable) (let [query-str (:query portal)]
+                              (span/with-span! ["pgwire.query" {:db.statement query-str}]
                                 (metrics/record-callable! query-timer (cmd-exec-query conn portal))))
     :prepare (cmd-prepare conn portal)
     :dml (cmd-exec-dml conn portal)
@@ -1624,7 +1623,7 @@
   freed at the end of this function. So the connections lifecycle should be totally enclosed over the lifetime of a connect call.
 
   See comment 'Connection lifecycle'."
-  [{:keys [node, ^Authenticator authn, server-state, port, allocator, query-error-counter, tx-error-counter, ^Counter total-connections-counter, ^Counter cancelled-connections-counter, query-timer, query-tracer] :as server} ^Socket conn-socket]
+  [{:keys [node, ^Authenticator authn, server-state, port, allocator, query-error-counter, tx-error-counter, ^Counter total-connections-counter, ^Counter cancelled-connections-counter, query-timer] :as server} ^Socket conn-socket]
   (let [close-promise (promise)
         {:keys [cid !closing?] :as conn} (util/with-close-on-catch [_ conn-socket]
                                            (let [cid (:next-cid (swap! server-state update :next-cid (fnil inc 0)))
@@ -1647,7 +1646,6 @@
         conn (assoc conn
                     :query-error-counter query-error-counter
                     :query-timer query-timer
-                    :query-tracer query-tracer
                     :tx-error-counter tx-error-counter
                     :cancelled-connections-counter cancelled-connections-counter)]
 
@@ -1775,7 +1773,6 @@
            server (assoc server
                          :query-error-counter query-error-counter
                          :query-timer query-timer
-                         :query-tracer tracer
                          :tx-error-counter tx-error-counter
                          :total-connections-counter total-connections-counter
                          :cancelled-connections-counter cancelled-connections-counter)
