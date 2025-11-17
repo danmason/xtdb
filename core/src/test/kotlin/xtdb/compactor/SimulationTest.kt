@@ -88,7 +88,9 @@ class MockDriver(
     override fun create(db: IDatabase) = ForDatabase(db)
 
     inner class ForDatabase(db: IDatabase) : Driver {
-        val channel = Channel<AppendMessage>(UNLIMITED)
+        // Use rendezvous channel (capacity=0) to force suspension on send
+        // This creates interleavings: sender must wait for receiver to be ready
+        val channel = Channel<AppendMessage>(capacity = 0)
         val trieCatalog = db.trieCatalog
 
         val job = CoroutineScope(dispatcher).launch {
