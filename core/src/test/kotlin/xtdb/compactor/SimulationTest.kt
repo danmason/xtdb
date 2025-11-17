@@ -93,9 +93,11 @@ class MockDriver(
 
         val job = CoroutineScope(dispatcher).launch {
             for (msg in channel) {
+                LOGGER.info("[CHANNEL-RECV] Processing message with ${msg.triesAdded.tries.size} tries (${Thread.currentThread().name})")
                 msg.triesAdded.tries.groupBy { it.tableName }.forEach { (tableName, tries) ->
                     trieCatalog.addTries(TableRef.parse(db.name, tableName), tries, msg.msgTimestamp)
                 }
+                LOGGER.info("[CHANNEL-DONE] Finished processing message (${Thread.currentThread().name})")
             }
         }
 
@@ -120,10 +122,11 @@ class MockDriver(
         }
 
         override suspend fun executeJob(job: Job): TriesAdded {
+            LOGGER.info("[EXEC-START] executeJob: ${job.table.tableName}/${job.outputTrieKey} (${Thread.currentThread().name})")
             val trieKey = job.outputTrieKey
             val trieDetailsBuilder = TrieDetails.newBuilder()
                 .setTableName(job.table.tableName)
-            if (trieKey.level == 1L) {
+            val result = if (trieKey.level == 1L) {
                 val addedTries = mutableListOf<TrieDetails>()
                 val size = job.trieKeys.sumOf { trieKeyToFileSize[it]!! }
                 val rand = trieKeyRand(trieKey)
@@ -164,9 +167,9 @@ class MockDriver(
                         )
                     }
                 }
-                return TriesAdded(Storage.VERSION, 0, addedTries)
+                TriesAdded(Storage.VERSION, 0, addedTries)
             } else {
-                return TriesAdded(
+                TriesAdded(
                     Storage.VERSION, 0,
                     listOf(
                         TrieDetails.newBuilder()
@@ -177,13 +180,17 @@ class MockDriver(
                     )
                 )
             }
+            LOGGER.info("[EXEC-END] executeJob: ${job.table.tableName}/${job.outputTrieKey} -> ${result.tries.size} tries (${Thread.currentThread().name})")
+            return result
         }
 
         var logOffset = 0L
 
         override suspend fun appendMessage(triesAdded: TriesAdded): Log.MessageMetadata {
+            LOGGER.info("[APPEND-START] appendMessage: ${triesAdded.tries.size} tries, offset=$logOffset (${Thread.currentThread().name})")
             val logTimestamp = Instant.now()
             channel.send(AppendMessage(triesAdded, logTimestamp))
+            LOGGER.info("[APPEND-END] appendMessage: sent to channel, offset=$logOffset (${Thread.currentThread().name})")
             return Log.MessageMetadata(logOffset++, logTimestamp)
         }
 
