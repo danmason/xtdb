@@ -62,7 +62,7 @@ For more information on how to set these up on Grafana, see the ["Monitoring XTD
 
 XTDB supports distributed tracing using OpenTelemetry, providing introspection into query execution and performance.
 
-Traces are sent via the OTLP (OpenTelemetry Protocol) HTTP endpoint to your tracing backend (e.g., Grafana Tempo, Jaeger, Zipkin).
+Traces are sent via the OTLP (OpenTelemetry Protocol) HTTP endpoint to your tracing backend (e.g., Grafana Tempo, Jaeger, etc).
 
 Tracing is disabled by default.
 

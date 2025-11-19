@@ -57,9 +57,9 @@ XTDB supports distributed tracing using OpenTelemetry, which can be visualized i
 
 You will need:
 
-- A running Tempo instance configured to receive OTLP traces
-- Tempo configured as a data source in Grafana
-- XTDB node configured with tracing enabled
+- A running Tempo instance configured to receive OTLP traces.
+- Tempo configured as a data source in Grafana.
+- XTDB node configured with tracing enabled.
 
 Refer to the [Tempo documentation](https://grafana.com/docs/tempo/latest/getting-started/) for setup instructions.
 
@@ -84,11 +84,10 @@ Once XTDB is configured and sending traces to Tempo:
 3. Use the query builder to search for traces by service name, operation, or other attributes.
 4. Click on individual traces to view detailed span information.
 
-Tracing provides introspection into queries, including:
+Tracing provides detailed introspection into query execution, including:
 
-- Which queries were executed
-- Individual query run times
-- Cursor-level metrics showing time spent in operations like sorting (ORDER BY) and table scans
-- Query text (available in the `xtdb.query` span attributes)
+- Per-query execution times for performance analysis.
+- Information on which queries were executed, available through the `xtdb.query` span attributes.
+- Lower-level operation timings, revealing how time is distributed across individual query operations.
 
 ![Query Tracing](/images/docs/query-tracing.png)
