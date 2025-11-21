@@ -232,6 +232,21 @@ annotation class WithDriverConfig(
     val blocksPerWeek: Long = 14
 )
 
+@Target(AnnotationTarget.FUNCTION)
+@Retention(AnnotationRetention.RUNTIME)
+annotation class WithNumberOfSystems(val numberOfSystems: Int)
+class NumberOfSystemsExtension : BeforeEachCallback {
+    override fun beforeEach(context: ExtensionContext) {
+        val annotation = context.requiredTestMethod.getAnnotation(WithNumberOfSystems::class.java)
+            ?: return
+
+        val testInstance = context.requiredTestInstance
+        if (testInstance !is SimulationTest) return
+
+        testInstance.numberOfSystems = annotation.numberOfSystems
+    }
+}
+
 @ParameterizedTest(name = "[iteration {0}]")
 @MethodSource("xtdb.SimulationTestBase#iterationSource")
 annotation class RepeatableSimulationTest
@@ -586,73 +601,11 @@ class SimulationTest : SimulationTestBase() {
             )
         }
     }
-}
-
-
-@Target(AnnotationTarget.FUNCTION)
-@Retention(AnnotationRetention.RUNTIME)
-annotation class WithNumberOfSystems(val numberOfSystems: Int)
-
-class NumberOfSystemsExtension : BeforeEachCallback {
-    override fun beforeEach(context: ExtensionContext) {
-        val annotation = context.requiredTestMethod.getAnnotation(WithNumberOfSystems::class.java)
-            ?: return
-
-        val testInstance = context.requiredTestInstance
-        if (testInstance !is MultiDbSimulationTest) return
-
-        testInstance.numberOfSystems = annotation.numberOfSystems
-    }
-}
-
-@Tag("property")
-@ExtendWith(DriverConfigExtension::class, NumberOfSystemsExtension::class)
-class MultiDbSimulationTest : SimulationTestBase() {
-    var driverConfig: DriverConfig = DriverConfig()
-    var numberOfSystems: Int = 2
-    private lateinit var mockDriver: MockDriver
-    private lateinit var jobCalculator: Compactor.JobCalculator
-    private lateinit var compactors: List<Compactor.Impl>
-    private lateinit var trieCatalogs: List<TrieCatalog>
-    private lateinit var dbs: List<MockDb>
-    private var compactCompletions: List<CompletableDeferred<Unit>> = listOf()
-
-    @BeforeEach
-    fun setUp() {
-        super.setUpSimulation()
-        setLogLevel.invoke("xtdb.compactor".symbol, logLevel)
-        mockDriver = MockDriver(dispatcher, currentSeed, driverConfig)
-        jobCalculator = createJobCalculator.invoke() as Compactor.JobCalculator
-
-        compactors = List(numberOfSystems) {
-            Compactor.Impl(mockDriver, null, jobCalculator, false, 2, dispatcher)
-        }
-
-        trieCatalogs = List(numberOfSystems) {
-            createTrieCatalog.invoke(mutableMapOf<Any, Any>(), 100 * 1024 * 1024) as TrieCatalog
-        }
-
-        dbs = List(numberOfSystems) { i ->
-            MockDb("xtdb-$i", trieCatalogs[i])
-        }
-    }
-
-    @AfterEach
-    fun tearDown() {
-        driverConfig = DriverConfig()
-        super.tearDownSimulation()
-    }
-
-    private fun addL0s(tableRef: TableRef, l0s: List<TrieDetails>) {
-        l0s.forEach {
-            mockDriver.trieKeyToFileSize[it.trieKey.toString()] = it.dataFileSize
-        }
-        dbs.forEach { db ->  db.trieCatalog.addTries(tableRef, l0s, Instant.now()) }
-    }
 
     @RepeatableSimulationTest
+    @WithNumberOfSystems(2)
     @Timeout(value = 5, unit = TimeUnit.SECONDS)
-    fun singleL0Compaction(iteration: Int) {
+    fun multiSystemSingleL0Compaction(iteration: Int) {
         val docsTable = TableRef("xtdb", "public", "docs")
         val l0Trie = buildTrieDetails(docsTable.tableName, L0TrieKeys.first())
 
@@ -679,9 +632,10 @@ class MultiDbSimulationTest : SimulationTestBase() {
     }
 
     @RepeatedTest(10)
+    @WithNumberOfSystems(2)
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
     @WithDriverConfig(temporalSplitting = BOTH)
-    fun biggerMultiCompactorRun() {
+    fun biggerMultiSystemCompactorRun() {
         val docsTable = TableRef("xtdb", "public", "docs")
         val l0tries = L0TrieKeys.take(1000).map { buildTrieDetails(docsTable.tableName, it, 10L * 1024L * 1024L) }
 
@@ -703,3 +657,4 @@ class MultiDbSimulationTest : SimulationTestBase() {
         )
     }
 }
+
