@@ -14,6 +14,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.future.future
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlinx.serialization.UseSerializers
 import kotlinx.serialization.modules.PolymorphicModuleBuilder
 import kotlinx.serialization.modules.subclass
@@ -70,7 +71,7 @@ import com.google.protobuf.Any as ProtoAny
  * }
  * ```
  */
-class BlobStorage(private val factory: Factory, private val prefix: Path) : ObjectStore, SupportsMultipart<String> {
+class BlobStorage(private val factory: Factory, private val prefix: Path, private val dispatcher: CoroutineDispatcher = Dispatchers.IO) : ObjectStore, SupportsMultipart<String> {
 
     private val client =
         BlobServiceClientBuilder().run {
@@ -88,7 +89,7 @@ class BlobStorage(private val factory: Factory, private val prefix: Path) : Obje
             buildClient()
         }.getBlobContainerClient(factory.container).also { it.createIfNotExists() }
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + dispatcher)
 
     override fun getObject(k: Path) = scope.future {
         try {
@@ -314,9 +315,11 @@ class BlobStorage(private val factory: Factory, private val prefix: Path) : Obje
         var userManagedIdentityClientId: String? = null,
         var storageAccountEndpoint: String? = null,
         var connectionString: String? = null,
+        @Transient var dispatcher: CoroutineDispatcher = Dispatchers.IO
     ) : ObjectStore.Factory {
 
         fun prefix(prefix: Path) = apply { this.prefix = prefix }
+        fun dispatcher(dispatcher: CoroutineDispatcher) = apply { this.dispatcher = dispatcher }
 
         @Suppress("unused")
         fun storageAccountKey(storageAccountKey: String) = apply { this.storageAccountKey = storageAccountKey }
@@ -329,7 +332,7 @@ class BlobStorage(private val factory: Factory, private val prefix: Path) : Obje
 
         fun connectionString(connectionString: String) = apply { this.connectionString = connectionString }
 
-        override fun openObjectStore(storageRoot: Path) = BlobStorage(this, prefix?.resolve(storageRoot) ?: storageRoot)
+        override fun openObjectStore(storageRoot: Path) = BlobStorage(this, prefix?.resolve(storageRoot) ?: storageRoot, dispatcher)
 
         override val configProto by lazy {
             ProtoAny.pack(azureBlobStorageConfig {

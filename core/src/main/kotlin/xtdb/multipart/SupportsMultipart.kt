@@ -22,11 +22,12 @@ interface SupportsMultipart<Part> : ObjectStore {
 
         private val LOGGER = RemoteBufferPool::class.logger
 
-        private val multipartUploadDispatcher =
-            IO.limitedParallelism(MAX_CONCURRENT_PART_UPLOADS, "upload-multipart")
-
         @JvmStatic
-        fun <P> SupportsMultipart<P>.uploadMultipartBuffers(key: Path, nioBuffers: List<ByteBuffer>): Unit = runBlocking {
+        fun <P> SupportsMultipart<P>.uploadMultipartBuffers(
+            key: Path,
+            nioBuffers: List<ByteBuffer>,
+            multipartUploadDispatcher: CoroutineDispatcher = IO.limitedParallelism(MAX_CONCURRENT_PART_UPLOADS, "upload-multipart")
+        ): Unit = runBlocking {
             val upload = startMultipart(key).await()
 
             try {

@@ -41,7 +41,8 @@ class LocalLog(
     rootPath: Path,
     private val instantSource: InstantSource,
     override val epoch: Int,
-    val useInstantSourceForNonTx: Boolean
+    val useInstantSourceForNonTx: Boolean,
+    private val dispatcher: CoroutineDispatcher = Dispatchers.Default
 ) : Log {
     companion object {
         private val Path.logFilePath get() = resolve("LOG")
@@ -104,7 +105,7 @@ class LocalLog(
         }
     }
 
-    private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default)
+    private val scope: CoroutineScope = CoroutineScope(dispatcher)
 
     internal data class NewMessage(
         val message: Message,
@@ -289,16 +290,18 @@ class LocalLog(
         val path: Path,
         @Transient var instantSource: InstantSource = InstantSource.system(),
         var epoch: Int = 0,
-        var useInstantSourceForNonTx: Boolean = false
+        var useInstantSourceForNonTx: Boolean = false,
+        @Transient var dispatcher: CoroutineDispatcher = Dispatchers.Default
     ) : Log.Factory {
 
         @Suppress("unused")
         fun instantSource(instantSource: InstantSource) = apply { this.instantSource = instantSource }
         fun epoch(epoch: Int) = apply { this.epoch = epoch }
         fun useInstantSourceForNonTx() = apply { this.useInstantSourceForNonTx = true }
+        fun dispatcher(dispatcher: CoroutineDispatcher) = apply { this.dispatcher = dispatcher }
 
         override fun openLog(clusters: Map<LogClusterAlias, Cluster>) =
-            LocalLog(path, instantSource, epoch, useInstantSourceForNonTx)
+            LocalLog(path, instantSource, epoch, useInstantSourceForNonTx, dispatcher)
 
         override fun writeTo(dbConfig: DatabaseConfig.Builder) {
             dbConfig.localLog = localLog {

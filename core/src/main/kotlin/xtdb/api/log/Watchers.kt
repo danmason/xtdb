@@ -8,14 +8,17 @@ import xtdb.api.log.Watchers.Event.*
 import java.util.concurrent.PriorityBlockingQueue
 import kotlin.time.Duration.Companion.seconds
 
-class Watchers(currentMsgId: MessageId) : AutoCloseable {
+class Watchers(
+    currentMsgId: MessageId,
+    private val dispatcher: CoroutineDispatcher = Dispatchers.Default
+) : AutoCloseable {
     private class Watcher(val msgId: MessageId, val onDone: CompletableDeferred<TransactionResult?>)
 
     @Volatile
     var currentMsgId = currentMsgId
         private set
 
-    private val scope = CoroutineScope(Dispatchers.Default)
+    private val scope = CoroutineScope(dispatcher)
 
     var exception: IngestionStoppedException? = null
         private set

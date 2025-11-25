@@ -12,6 +12,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.future.future
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlinx.serialization.UseSerializers
 import kotlinx.serialization.modules.PolymorphicModuleBuilder
 import kotlinx.serialization.modules.subclass
@@ -56,11 +57,12 @@ class CloudStorage(
     private val projectId: String,
     private val bucket: String,
     private val prefix: Path,
+    private val dispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : ObjectStore {
 
     private val client = StorageOptions.newBuilder().run { setProjectId(projectId); build() }.service
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + dispatcher)
 
     override fun getObject(k: Path) = scope.future {
         runInterruptible {
@@ -165,12 +167,14 @@ class CloudStorage(
         val projectId: String,
         val bucket: String,
         var prefix: Path? = null,
+        @Transient var dispatcher: CoroutineDispatcher = Dispatchers.IO
     ) : ObjectStore.Factory {
 
         fun prefix(prefix: Path) = apply { this.prefix = prefix }
+        fun dispatcher(dispatcher: CoroutineDispatcher) = apply { this.dispatcher = dispatcher }
 
         override fun openObjectStore(storageRoot: Path) =
-            CloudStorage(projectId, bucket, prefix?.resolve(storageRoot) ?: storageRoot)
+            CloudStorage(projectId, bucket, prefix?.resolve(storageRoot) ?: storageRoot, dispatcher)
 
         override val configProto: ProtoAny by lazy {
             ProtoAny.pack(gcsObjectStoreConfig {

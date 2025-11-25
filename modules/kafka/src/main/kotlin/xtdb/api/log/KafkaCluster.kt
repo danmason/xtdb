@@ -11,6 +11,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.future.future
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlinx.serialization.UseSerializers
 import kotlinx.serialization.modules.PolymorphicModuleBuilder
 import kotlinx.serialization.modules.subclass
@@ -110,9 +111,10 @@ private fun AdminClient.ensureTopicExists(topic: String, autoCreate: Boolean) {
 class KafkaCluster(
     val kafkaConfigMap: KafkaConfigMap,
     private val pollDuration: Duration,
+    private val dispatcher: CoroutineDispatcher = Dispatchers.Default
 ) : Cluster {
     val producer = kafkaConfigMap.openProducer()
-    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val scope = CoroutineScope(SupervisorJob() + dispatcher)
 
     override fun close() {
         runBlocking { withTimeout(5.seconds) { scope.coroutineContext.job.cancelAndJoin() } }
@@ -126,11 +128,13 @@ class KafkaCluster(
         var pollDuration: Duration = Duration.ofSeconds(1),
         var propertiesMap: Map<String, String> = emptyMap(),
         var propertiesFile: Path? = null,
+        @Transient var dispatcher: CoroutineDispatcher = Dispatchers.Default
     ) : Cluster.Factory<KafkaCluster> {
 
         fun pollDuration(pollDuration: Duration) = apply { this.pollDuration = pollDuration }
         fun propertiesMap(propertiesMap: Map<String, String>) = apply { this.propertiesMap = propertiesMap }
         fun propertiesFile(propertiesFile: Path) = apply { this.propertiesFile = propertiesFile }
+        fun dispatcher(dispatcher: CoroutineDispatcher) = apply { this.dispatcher = dispatcher }
 
         private val Path.asPropertiesMap: Map<String, String>
             get() =
@@ -143,7 +147,7 @@ class KafkaCluster(
                 .plus(propertiesMap)
                 .plus(propertiesFile?.asPropertiesMap.orEmpty())
 
-        override fun open(): KafkaCluster = KafkaCluster(configMap, pollDuration)
+        override fun open(): KafkaCluster = KafkaCluster(configMap, pollDuration, dispatcher)
     }
 
     private inner class KafkaLog(
