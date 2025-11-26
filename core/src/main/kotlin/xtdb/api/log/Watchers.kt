@@ -8,7 +8,7 @@ import xtdb.api.log.Watchers.Event.*
 import java.util.concurrent.PriorityBlockingQueue
 import kotlin.time.Duration.Companion.seconds
 
-class Watchers(
+class Watchers @JvmOverloads constructor(
     currentMsgId: MessageId,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default)
 ) : AutoCloseable {

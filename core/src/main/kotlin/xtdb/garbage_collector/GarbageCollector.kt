@@ -14,7 +14,7 @@ import kotlin.time.Duration.Companion.seconds
 
 private val LOGGER = LoggerFactory.getLogger(GarbageCollector::class.java)
 
-class GarbageCollector(
+class GarbageCollector @JvmOverloads constructor(
     db: Database,
     private val blocksToKeep: Int,
     private val garbageLifetime: Duration,
