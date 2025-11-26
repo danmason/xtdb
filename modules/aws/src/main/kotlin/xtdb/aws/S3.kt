@@ -66,9 +66,10 @@ class S3(
     private val prefix: Path,
     private val configurator: S3Configurator,
     private val factory: Factory,
+    scope: CoroutineScope = CoroutineScope(Dispatchers.IO)
 ) : ObjectStore, SupportsMultipart<CompletedPart> {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + scope.coroutineContext)
 
     override fun close() {
         runBlocking { withTimeout(5.seconds) { scope.coroutineContext.job.cancelAndJoin() } }
@@ -261,6 +262,7 @@ class S3(
         @Serializable(StringWithEnvVarSerde::class) var endpoint: String? = null,
         var pathStyleAccessEnabled: Boolean = false,
         @Transient var s3Configurator: S3Configurator = S3Configurator.Default,
+        @Transient var scope: CoroutineScope = CoroutineScope(Dispatchers.IO)
     ) : ObjectStore.Factory {
 
         fun prefix(prefix: Path) = apply { this.prefix = prefix }
@@ -278,6 +280,8 @@ class S3(
         fun pathStyleAccessEnabled(enabled: Boolean) = apply { this.pathStyleAccessEnabled = enabled }
 
         fun s3Configurator(s3Configurator: S3Configurator) = apply { this.s3Configurator = s3Configurator }
+
+        fun scope(scope: CoroutineScope) = apply { this.scope = scope }
 
         override fun openObjectStore(storageRoot: Path): S3 {
             val client =
@@ -297,7 +301,7 @@ class S3(
                         s3Configurator.configureClient(this)
                     }.build()
 
-            return S3(client, bucket, prefix?.resolve(storageRoot) ?: storageRoot, s3Configurator, this)
+            return S3(client, bucket, prefix?.resolve(storageRoot) ?: storageRoot, s3Configurator, this, scope)
         }
 
         override val configProto by lazy {

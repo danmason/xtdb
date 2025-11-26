@@ -19,8 +19,8 @@ class GarbageCollector(
     private val blocksToKeep: Int,
     private val garbageLifetime: Duration,
     private val approxRunInterval: Duration,
+    private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO)
 ) : Closeable {
-    private val scope = CoroutineScope(Dispatchers.IO)
 
     private val blockCatalog = db.blockCatalog
     private val trieCatalog = db.trieCatalog

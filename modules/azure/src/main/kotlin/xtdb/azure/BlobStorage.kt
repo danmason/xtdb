@@ -70,7 +70,11 @@ import com.google.protobuf.Any as ProtoAny
  * }
  * ```
  */
-class BlobStorage(private val factory: Factory, private val prefix: Path) : ObjectStore, SupportsMultipart<String> {
+class BlobStorage(
+    private val factory: Factory,
+    private val prefix: Path,
+    scope: CoroutineScope = CoroutineScope(Dispatchers.IO)
+) : ObjectStore, SupportsMultipart<String> {
 
     private val client =
         BlobServiceClientBuilder().run {
@@ -88,7 +92,7 @@ class BlobStorage(private val factory: Factory, private val prefix: Path) : Obje
             buildClient()
         }.getBlobContainerClient(factory.container).also { it.createIfNotExists() }
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + scope.coroutineContext)
 
     override fun getObject(k: Path) = scope.future {
         try {
@@ -314,6 +318,7 @@ class BlobStorage(private val factory: Factory, private val prefix: Path) : Obje
         var userManagedIdentityClientId: String? = null,
         var storageAccountEndpoint: String? = null,
         var connectionString: String? = null,
+        @kotlinx.serialization.Transient var scope: CoroutineScope = CoroutineScope(Dispatchers.IO)
     ) : ObjectStore.Factory {
 
         fun prefix(prefix: Path) = apply { this.prefix = prefix }
@@ -329,7 +334,9 @@ class BlobStorage(private val factory: Factory, private val prefix: Path) : Obje
 
         fun connectionString(connectionString: String) = apply { this.connectionString = connectionString }
 
-        override fun openObjectStore(storageRoot: Path) = BlobStorage(this, prefix?.resolve(storageRoot) ?: storageRoot)
+        fun scope(scope: CoroutineScope) = apply { this.scope = scope }
+
+        override fun openObjectStore(storageRoot: Path) = BlobStorage(this, prefix?.resolve(storageRoot) ?: storageRoot, scope)
 
         override val configProto by lazy {
             ProtoAny.pack(azureBlobStorageConfig {

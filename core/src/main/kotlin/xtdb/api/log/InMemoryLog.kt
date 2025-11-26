@@ -19,25 +19,29 @@ import java.time.temporal.ChronoUnit.MICROS
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
-class InMemoryLog(private val instantSource: InstantSource, override val epoch: Int) : Log {
+class InMemoryLog(
+    private val instantSource: InstantSource,
+    override val epoch: Int,
+    private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default)
+) : Log {
 
     @SerialName("!InMemory")
     @Serializable
     data class Factory(
         @Transient var instantSource: InstantSource = InstantSource.system(),
-        var epoch: Int = 0
+        var epoch: Int = 0,
+        @Transient var scope: CoroutineScope = CoroutineScope(Dispatchers.Default)
     ) : Log.Factory {
         fun instantSource(instantSource: InstantSource) = apply { this.instantSource = instantSource }
         fun epoch(epoch: Int) = apply { this.epoch = epoch }
+        fun scope(scope: CoroutineScope) = apply { this.scope = scope }
 
-        override fun openLog(clusters: Map<LogClusterAlias, Cluster>) = InMemoryLog(instantSource, epoch)
+        override fun openLog(clusters: Map<LogClusterAlias, Cluster>) = InMemoryLog(instantSource, epoch, scope)
 
         override fun writeTo(dbConfig: DatabaseConfig.Builder) {
             dbConfig.inMemoryLog = inMemoryLog {  }
         }
     }
-
-    private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default)
     private val subscriberScope = scope + SupervisorJob(scope.coroutineContext.job)
 
     internal data class NewMessage(

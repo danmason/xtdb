@@ -110,9 +110,10 @@ private fun AdminClient.ensureTopicExists(topic: String, autoCreate: Boolean) {
 class KafkaCluster(
     val kafkaConfigMap: KafkaConfigMap,
     private val pollDuration: Duration,
+    scope: CoroutineScope = CoroutineScope(Dispatchers.Default)
 ) : Cluster {
     val producer = kafkaConfigMap.openProducer()
-    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val scope: CoroutineScope = CoroutineScope(SupervisorJob() + scope.coroutineContext)
 
     override fun close() {
         runBlocking { withTimeout(5.seconds) { scope.coroutineContext.job.cancelAndJoin() } }
@@ -126,11 +127,13 @@ class KafkaCluster(
         var pollDuration: Duration = Duration.ofSeconds(1),
         var propertiesMap: Map<String, String> = emptyMap(),
         var propertiesFile: Path? = null,
+        @kotlinx.serialization.Transient var scope: CoroutineScope = CoroutineScope(Dispatchers.Default)
     ) : Cluster.Factory<KafkaCluster> {
 
         fun pollDuration(pollDuration: Duration) = apply { this.pollDuration = pollDuration }
         fun propertiesMap(propertiesMap: Map<String, String>) = apply { this.propertiesMap = propertiesMap }
         fun propertiesFile(propertiesFile: Path) = apply { this.propertiesFile = propertiesFile }
+        fun scope(scope: CoroutineScope) = apply { this.scope = scope }
 
         private val Path.asPropertiesMap: Map<String, String>
             get() =
@@ -143,7 +146,7 @@ class KafkaCluster(
                 .plus(propertiesMap)
                 .plus(propertiesFile?.asPropertiesMap.orEmpty())
 
-        override fun open(): KafkaCluster = KafkaCluster(configMap, pollDuration)
+        override fun open(): KafkaCluster = KafkaCluster(configMap, pollDuration, scope)
     }
 
     private inner class KafkaLog(
