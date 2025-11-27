@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.io.TempDir
 import xtdb.api.log.Log.Message
 import xtdb.api.log.Log.Record
+import xtdb.util.ThrowingDispatchers
 import java.nio.file.Path
 import kotlin.time.Duration.Companion.seconds
 
@@ -17,7 +18,9 @@ class LocalLogTest {
     @Tag("integration")
     @RepeatedTest(5000)
     fun `close should cancel all subscription coroutines without leaking`() = runTest(timeout = 10.seconds) {
-        val log = LocalLog.Factory(tempDir.resolve("log")).openLog(emptyMap())
+        val log = LocalLog.Factory(tempDir.resolve("log"))
+            .coroutineContext(ThrowingDispatchers.Default)
+            .openLog(emptyMap())
 
         // Create a subscription
         val records = mutableListOf<Record>()
