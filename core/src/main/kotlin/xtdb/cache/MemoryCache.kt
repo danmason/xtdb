@@ -7,6 +7,7 @@ import io.micrometer.core.instrument.MeterRegistry
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import org.apache.arrow.memory.ArrowBuf
 import org.apache.arrow.memory.BufferAllocator
 import org.apache.arrow.memory.ForeignAllocation
@@ -18,6 +19,7 @@ import java.nio.channels.ClosedByInterruptException
 import java.nio.channels.FileChannel
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.CoroutineContext
 import kotlin.io.path.fileSize
 
 private typealias FetchReqs = MutableMap<PathSlice, MutableSet<CompletableDeferred<ArrowBuf>>>
@@ -34,7 +36,7 @@ class MemoryCache @JvmOverloads internal constructor(
     al: BufferAllocator,
     maxSizeBytes: Long,
     private val pathLoader: PathLoader = PathLoader(),
-    private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val coroutineContext: CoroutineContext = Dispatchers.IO,
 ) : AutoCloseable {
     private val cacheAl = al.newChildAllocator("memory-cache", 0, maxSizeBytes)
 
@@ -42,7 +44,7 @@ class MemoryCache @JvmOverloads internal constructor(
 
     // For testing
     private suspend fun yieldIfSimulation() {
-        if (dispatcher != Dispatchers.IO) yield()
+        if (coroutineContext != Dispatchers.IO) yield()
     }
 
     data class Slice(val offset: Long, val length: Long) {
@@ -91,7 +93,7 @@ class MemoryCache @JvmOverloads internal constructor(
         }
 
     private val fetchParentJob = Job()
-    private val scope = CoroutineScope(SupervisorJob(fetchParentJob) + dispatcher)
+    private val scope = CoroutineScope(SupervisorJob(fetchParentJob) + coroutineContext)
 
     private sealed interface FetchChEvent {
         suspend fun handle(fetchReqs: FetchReqs)
@@ -195,7 +197,7 @@ class MemoryCache @JvmOverloads internal constructor(
     private val fetchCh = Channel<FetchChEvent>()
 
     init {
-        CoroutineScope(fetchParentJob + dispatcher + CoroutineName("MemoryCache FetchLoop")).launch {
+        CoroutineScope(fetchParentJob + coroutineContext + CoroutineName("MemoryCache FetchLoop")).launch {
             val fetchReqs: FetchReqs = mutableMapOf()
 
             try {
@@ -247,13 +249,17 @@ class MemoryCache @JvmOverloads internal constructor(
      * @property maxSizeRatio max size of the cache, as a proportion of the maximum direct memory of the JVM
      */
     @Serializable
-    class Factory(var maxSizeBytes: Long? = null, var maxSizeRatio: Double = 0.5) {
+    class Factory(
+        var maxSizeBytes: Long? = null,
+        var maxSizeRatio: Double = 0.5,
+        @Transient var coroutineContext: CoroutineContext = Dispatchers.IO
+    ) {
         fun maxSizeBytes(maxSizeBytes: Long?) = apply { this.maxSizeBytes = maxSizeBytes }
         fun maxSizeRatio(maxSizeRatio: Double) = apply { this.maxSizeRatio = maxSizeRatio }
-
+        fun coroutineContext(coroutineContext: CoroutineContext) = apply { this.coroutineContext = coroutineContext }
         fun open(al: BufferAllocator, meterRegistry: MeterRegistry? = null): MemoryCache {
             val maxSizeBytes = maxSizeBytes ?: (maxDirectMemory * maxSizeRatio).toLong()
-            return MemoryCache(al, maxSizeBytes)
+            return MemoryCache(al, maxSizeBytes, coroutineContext = coroutineContext)
                 .also { meterRegistry?.registerMemoryCache(it) }
         }
     }
