@@ -518,6 +518,52 @@ class NodeSimulationTest : SimulationTestBase() {
     }
 
     @RepeatableSimulationTest
+    @Timeout(value = 15, unit = TimeUnit.SECONDS)
+    fun `l0 to l3 compaction and gc`(iteration: Int) {
+        val table = TableRef("xtdb", "public", "docs")
+        val defaultFileTarget = 100L * 1024L * 1024L
+        val blockCatalog = blockCatalogs[0]
+        val trieCatalog = trieCatalogs[0]
+        val compactorForDb = compactorsForDb[0]
+        val garbageCollector = garbageCollectors[0]
+
+        val l0Tries = L0TrieKeys.take(16).toList()
+
+        addTries(
+            table,
+            l0Tries.map { buildTrieDetails(table.tableName, it, defaultFileTarget) },
+            Instant.now()
+        )
+
+        for (blockIndex in 1L..15L) {
+            blockCatalog.finishBlock(
+                blockIndex = blockIndex,
+                latestCompletedTx = TransactionKey(txId = blockIndex, systemTime = Instant.now()),
+                latestProcessedMsgId = blockIndex,
+                tables = listOf(table),
+                secondaryDatabases = null
+            )
+        }
+
+        compactorForDb.compactAll()
+        runBlocking { garbageCollector.garbageCollectTries(Instant.now() + Duration.ofHours(1)) }
+
+        val triesInCatalog = trieCatalog.listAllTrieKeys(table)
+        val l0Count = triesInCatalog.prefix("l00-rc-").size
+        val l1Count = triesInCatalog.prefix("l01-rc-").size
+        val l2Count = triesInCatalog.prefix("l02-rc-").size
+        val l3Count = triesInCatalog.prefix("l03-rc-").size
+        Assertions.assertEquals(16, l0Count, "L0 tries should still be present in catalog")
+        Assertions.assertEquals(0, l1Count, "L1 tries should be fully compacted and garbage collected")
+        Assertions.assertEquals(0, l2Count, "L2 tries should be fully compacted and garbage collected")
+        Assertions.assertEquals(16, l3Count, "Should have at least 16 L3 tries after cascading compaction")
+
+        val triesInBufferPool = listTrieNamesFromBufferPool(sharedBufferPool, table)
+        Assertions.assertEquals(triesInCatalog.toSet(), triesInBufferPool.toSet(), "Buffer pool should match catalog after compaction and GC")
+
+    }
+
+    @RepeatableSimulationTest
     @WithNumberOfSystems(2)
     @Timeout(value = 15, unit = TimeUnit.SECONDS)
     fun `cascading multi-level compaction with concurrent gc`(iteration: Int) {
