@@ -91,7 +91,7 @@ class NumberOfSystemsExtension : BeforeEachCallback {
 }
 
 // Settings used by all tests in this class
-private const val logLevel = "WARN"
+private const val logLevel = "DEBUG"
 
 @Tag("property")
 @ExtendWith(NumberOfSystemsExtension::class)
@@ -732,9 +732,10 @@ class NodeSimulationTest : SimulationTestBase() {
         Assertions.assertEquals(finalTries, bufferPoolTries, "Buffer pool should match catalog")
     }
 
-    @RepeatedTest(10)
+    @RepeatedTest(1)
     @WithNumberOfSystems(2)
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    @WithSeed(1933065652)
     fun `large compactor run with multiple gc passes`() {
         val table = TableRef("xtdb", "public", "docs")
         val l0tries = L0TrieKeys.take(1000).map { buildTrieDetails(table.tableName, it, 10L * 1024L * 1024L) }
@@ -807,8 +808,22 @@ class NodeSimulationTest : SimulationTestBase() {
         Assertions.assertEquals(64, l4Count, "Should have 64 L4 tries after final GC")
 
         // Verify buffer pool matches catalog
+        val finalTriesSet = finalTries.toSet()
         val bufferPoolTries = listTrieNamesFromBufferPool(sharedBufferPool, table).toSet()
-        Assertions.assertEquals(finalTries.toSet(), bufferPoolTries, "Buffer pool should match catalog")
+        val onlyInTries = finalTriesSet - bufferPoolTries
+        val onlyInBp = bufferPoolTries - finalTriesSet
+        Assertions.assertTrue(onlyInTries.isEmpty() && onlyInBp.isEmpty()) {
+            """
+            Sets are not equal:
+            Only in TrieCatalog: $onlyInTries
+            Only in BufferPool: $onlyInBp
+            """.trimIndent()
+            }
+        //Assertions.assertEquals(finalTries.toSet(), bufferPoolTries, "Buffer pool should match catalog")
 
     }
+
+
+
+    // fails VERY occasionally and not determinsiically - still have l01-rc-b00 on the buffer pool for some reason
 }
