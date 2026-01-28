@@ -71,6 +71,10 @@
 
                                               (let [block-lag (->block-lag db)
                                                     block-lag-healthy? (<= block-lag 5)]
+                                                
+                                                (when-not block-lag-healthy?
+                                                  (log/warn "Node block lag unhealthy - currently %s blocks behind current" block-lag))
+                                                
                                                 (-> (if block-lag-healthy?
                                                       {:status 200, :body "Alive."}
                                                       {:status 503, :body "Unhealthy - see headers for more info."})
