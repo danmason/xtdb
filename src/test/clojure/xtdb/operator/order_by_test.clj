@@ -4,7 +4,7 @@
             [xtdb.node :as xtn]
             [xtdb.operator.order-by :as order-by]
             [xtdb.test-util :as tu])
-  (:import (java.time Instant Duration)))
+  (:import (java.time Instant Duration ZoneId)))
 
 (t/use-fixtures :each tu/with-allocator)
 
@@ -85,20 +85,15 @@
                                       [:put-docs {:into :docs
                                                   :valid-from (.plus base-vf (Duration/ofMinutes i))}
                                        {:xt/id "doc1" :val i}])
-                                    batch))))
+                                    batch)))
 
-      (t/testing "ORDER BY valid from ascending"
-        (let [results-asc (xt/q node "FROM docs FOR VALID_TIME ALL SELECT id, _valid_from ORDER BY _valid_from")]
-          (t/is (= 24 (count results-asc)))
-          (t/is (= #xt/zdt "2020-01-01T00:00Z[UTC]"
-                   (:xt/valid-from (first results-asc))))
-          (t/is (= #xt/zdt "2020-01-01T00:23Z[UTC]"
-                   (:xt/valid-from (last results-asc))))))
+        (let [expected-vfs (mapv #(.atZone (.plus base-vf (Duration/ofMinutes %)) (ZoneId/of "UTC")) (range 24))]
+          (t/testing "ORDER BY valid from ascending"
+            (let [results (xt/q node "FROM docs FOR VALID_TIME ALL SELECT _id, _valid_from ORDER BY _valid_from")]
+              (t/is (= expected-vfs
+                       (mapv :xt/valid-from results)))))
 
-      (t/testing "ORDER BY valid from descending"
-        (let [results-desc (xt/q node "FROM docs FOR VALID_TIME ALL SELECT id, _valid_from ORDER BY _valid_from DESC")]
-          (t/is (= 24 (count results-desc)))
-          (t/is (= #xt/zdt "2020-01-01T00:23Z[UTC]"
-                   (:xt/valid-from (first results-desc))))
-          (t/is (= #xt/zdt "2020-01-01T00:00Z[UTC]"
-                   (:xt/valid-from (last results-desc)))))))))
+          (t/testing "ORDER BY valid from descending"
+            (let [results (xt/q node "FROM docs FOR VALID_TIME ALL SELECT _id, _valid_from ORDER BY _valid_from DESC")]
+              (t/is (= (rseq expected-vfs)
+                       (mapv :xt/valid-from results))))))))))
