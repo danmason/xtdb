@@ -415,3 +415,33 @@
         (jdbc/execute! xtdb-conn-2 ["INSERT INTO foo RECORDS {_id: 'primary3'}"])
         (t/is (= #{{:_id "primary"} {:_id "primary2"} {:_id "primary3"}}
                  (set (jdbc/execute! xtdb-conn-2 ["SELECT * FROM foo"]))))))))
+
+(t/deftest ^:integration test-tx-id-prefix-prevents-cross-environment-fencing
+  (let [env-a-topic (str "xtdb.kafka-test.env-a." (random-uuid))
+        env-b-topic (str "xtdb.kafka-test.env-b." (random-uuid))]
+    (util/with-tmp-dirs #{path-a path-b}
+      (with-open [node-a (xtn/start-node {:tx-id-prefix "env-a"
+                                          :log-clusters {:my-kafka [:kafka {:bootstrap-servers *bootstrap-servers*}]}
+                                          :log [:kafka {:cluster :my-kafka
+                                                        :topic env-a-topic}]
+                                          :storage [:remote {:object-store [:in-memory {}]}]
+                                          :disk-cache {:path path-a}})
+                  node-b (xtn/start-node {:tx-id-prefix "env-b"
+                                          :log-clusters {:my-kafka [:kafka {:bootstrap-servers *bootstrap-servers*}]}
+                                          :log [:kafka {:cluster :my-kafka
+                                                        :topic env-b-topic}]
+                                          :storage [:remote {:object-store [:in-memory {}]}]
+                                          :disk-cache {:path path-b}})]
+
+        (t/testing "both nodes can transact without fencing each other"
+          (t/is (xt/execute-tx node-a [[:put-docs :docs {:xt/id :from-a}]]))
+          (t/is (xt/execute-tx node-b [[:put-docs :docs {:xt/id :from-b}]]))
+
+          (t/is (xt/execute-tx node-a [[:put-docs :docs {:xt/id :from-a-2}]]))
+          (t/is (xt/execute-tx node-b [[:put-docs :docs {:xt/id :from-b-2}]])))
+
+        (t/testing "each node sees only its own data"
+          (t/is (= #{{:xt/id :from-a} {:xt/id :from-a-2}}
+                   (set (xt/q node-a "SELECT _id FROM docs"))))
+          (t/is (= #{{:xt/id :from-b} {:xt/id :from-b-2}}
+                   (set (xt/q node-b "SELECT _id FROM docs")))))))))
