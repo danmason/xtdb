@@ -152,13 +152,8 @@ class PostgresSource(
         }
     }
 
-    /**
-     * Runs [block] with a child coroutine that force-closes [closeable] on cancellation.
-     *
-     * pgjdbc's socket reads don't respond to Thread.interrupt(), so coroutine
-     * cancellation alone can't unblock them. The child coroutine watches for
-     * cancellation and closes the resource, causing the blocked read to throw.
-     */
+    // pgjdbc reads ignore Thread.interrupt(); force-closing the resource is the
+    // only way to unblock a parked socket read on coroutine cancellation.
     private suspend fun <T : AutoCloseable, R> closeOnCancel(closeable: T, block: suspend () -> R): R =
         coroutineScope {
             val watcher = launch {
@@ -206,20 +201,18 @@ class PostgresSource(
 
     private suspend fun streamChanges(txIndexer: TxIndexer, startLsn: Long) {
         driver.openStream(startLsn).use { stream ->
-            closeOnCancel(stream) {
-                while (currentCoroutineContext().isActive) {
-                    stream.nextTransaction { tx ->
-                        val token = ProtoAny.pack(postgresSourceToken {
-                            latestCommittedLsn = tx.lsn
-                            snapshotCompleted = true
-                        }, PROTO_TAG)
+            while (currentCoroutineContext().isActive) {
+                stream.nextTransaction { tx ->
+                    val token = ProtoAny.pack(postgresSourceToken {
+                        latestCommittedLsn = tx.lsn
+                        snapshotCompleted = true
+                    }, PROTO_TAG)
 
-                        txIndexer.indexTx(token, systemTime = tx.commitTime) { openTx ->
-                            for (op in tx.ops) {
-                                writeOp(openTx, dbName, op)
-                            }
-                            TxResult.Committed()
+                    txIndexer.indexTx(token, systemTime = tx.commitTime) { openTx ->
+                        for (op in tx.ops) {
+                            writeOp(openTx, dbName, op)
                         }
+                        TxResult.Committed()
                     }
                 }
             }

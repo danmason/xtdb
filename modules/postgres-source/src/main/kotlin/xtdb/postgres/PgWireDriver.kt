@@ -18,6 +18,7 @@ import java.sql.Connection
 import java.sql.DriverManager
 import java.time.Instant
 import java.util.*
+import kotlin.time.Duration.Companion.milliseconds
 
 private val LOG = PgWireDriver::class.logger
 
@@ -26,6 +27,12 @@ private const val SNAPSHOT_BATCH_SIZE = 1000
 private const val SLOT_RETRY_MAX_ATTEMPTS = 7
 private const val SLOT_RETRY_BASE_DELAY_MS = 1000L
 private val SLOT_ACTIVE_PATTERN = Regex(".*replication slot .* is active.*")
+
+private const val MAX_EMPTY_HOT_POLLS = 5
+
+// Must stay below pgjdbc's status interval (default 10s) or the server
+// times the slot out for missing keepalives.
+private val IDLE_POLL_PAUSE = 50.milliseconds
 
 class PgWireDriver(
     private val dbName: String,
@@ -193,9 +200,19 @@ class PgWireDriver(
 
         override suspend fun nextTransaction(block: suspend (PostgresDriver.Transaction) -> Unit) {
             var currentTxOps = mutableListOf<RowOp>()
+            var emptyPolls = 0
 
             while (currentCoroutineContext().isActive) {
-                val msg = runInterruptible(Dispatchers.IO) { stream.read()!! }
+                val msg = withContext(Dispatchers.IO) { stream.readPending() }
+                if (msg == null) {
+                    if (++emptyPolls >= MAX_EMPTY_HOT_POLLS) {
+                        emptyPolls = 0
+                        delay(IDLE_POLL_PAUSE)
+                    }
+                    continue
+                }
+                emptyPolls = 0
+
                 val parsed = PgOutputMessage.parse(msg)
                 LOG.trace { "[$dbName] Received ${parsed::class.simpleName}" }
 
@@ -259,8 +276,7 @@ class PgWireDriver(
             throw CancellationException("Streaming loop cancelled")
         }
 
-        // stream.close() takes a lock held by the in-progress read.
-        // replConn.close() bypasses the lock and closes the socket, releasing the slot.
+        // stream.close() is unreliable; closing replConn is what releases the slot.
         override fun close() {
             replConn.close()
         }
