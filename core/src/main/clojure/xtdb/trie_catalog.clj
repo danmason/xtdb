@@ -10,8 +10,7 @@
            [java.util Map]
            [java.util.concurrent ConcurrentHashMap]
            (xtdb.log.proto TemporalMetadata TrieDetails TrieMetadata)
-           (xtdb.segment Segment$PageMeta)
-           (xtdb.util TemporalBounds)))
+           (xtdb.segment Segment$PageMeta)))
 
 (s/def ::level int?)
 (s/def ::recency (s/nilable #(instance? LocalDate %)))
@@ -352,16 +351,14 @@
       (.setMaxSystemFrom Long/MAX_VALUE)
       (.build)))
 
-(defrecord CatalogEntry [^LocalDate recency ^TrieMetadata trie-metadata ^TemporalBounds query-bounds]
+(defrecord CatalogEntry [^LocalDate recency ^TrieMetadata trie-metadata]
   Segment$PageMeta
-  (testMetadata [_]
-    (let [min-query-recency (min (.getLower (.getValidTime query-bounds)) (.getLower (.getSystemTime query-bounds)))]
-      (if-let [^long recency (and recency (time/instant->micros (time/->instant recency {:default-tz ZoneOffset/UTC})))]
-        ;; the recency of a trie is exclusive, no row in that file has a recency equal to it
-        (< min-query-recency recency)
-        true)))
+  ;; `testMetadata` is the content predicate; trie-level catalogue entries don't carry one,
+  ;; so this is always true. Recency is enforced by `filter-pages` via `getRecency`.
+  (testMetadata [_] true)
 
   (getRecency [_]
+    ;; the recency of a trie is exclusive — no row in that file has a recency equal to it
     (if recency
       (time/instant->micros (time/->instant recency {:default-tz ZoneOffset/UTC}))
       Long/MAX_VALUE))
@@ -373,7 +370,7 @@
         no-temporal-metadata)))
 
 (defn filter-tries [tries query-bounds]
-  (-> (map (comp map->CatalogEntry #(assoc % :query-bounds query-bounds)) tries)
+  (-> (map map->CatalogEntry tries)
       (trie/filter-pages {:query-bounds query-bounds})))
 
 (defn <-trie-metadata [^TrieMetadata trie-metadata]

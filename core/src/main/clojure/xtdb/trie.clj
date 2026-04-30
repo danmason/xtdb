@@ -92,10 +92,6 @@
     (catch IllegalArgumentException _)
     (catch IllegalStateException _)))
 
-(defn parse-trie-file-path [^Path file-path]
-  (-> (parse-trie-key (str (.getFileName file-path)))
-      (assoc :file-path file-path)))
-
 (defn table-name->table-path ^java.nio.file.Path [^String table-name]
   (Trie/getTablePath table-name))
 
@@ -109,48 +105,70 @@
       (.build)))
 
 (defn filter-pages
+  "Returns the subset of pages that contribute to the query result.
+
+  Pages are categorised by what they can do to the result:
+
+  - **emit** — rows in this page can appear in the output. 
+    Temporal bounds match the query AND content predicate (`testMetadata`) matches.
+  - **supersede** — rows here can affect an emit row's multiplicity - whether it's duplicated (U-shaped) or filtered out.
+    Temporal bounds match the query; content predicate need not.
+  - **constrain** — rows here can affect the bounds of the resulting polygons.
+    Temporal bounds disjoint from the query but overlapping the emit envelope."
+
   ([pages] (filter-pages pages {}))
+
   ([pages {:keys [^TemporalBounds query-bounds], :or {query-bounds (TemporalBounds.)}}]
-   (let [leaves (ArrayList.)]
+   (let [leaves (ArrayList.)
+         min-query-recency (long (min (.getLower (.getValidTime query-bounds))
+                                      (.getLower (.getSystemTime query-bounds))))
+         temporal-intersects? (fn [^Segment$PageMeta page]
+                                (and (Temporal/intersects (.getTemporalMetadata page) query-bounds)
+                                     (< min-query-recency (.getRecency page))))]
+
      (loop [[^Segment$PageMeta page & more-pages] pages
             smallest-valid-from Long/MAX_VALUE
             largest-valid-to Long/MIN_VALUE
             smallest-system-from Long/MAX_VALUE
-            non-taken-pages []]
+            non-emit-candidates []]
        (if page
-         (let [temporal-metadata (.getTemporalMetadata page)
-               take-node? (and (Temporal/intersects temporal-metadata query-bounds)
-                               (.testMetadata page))]
-           (if take-node?
+         ;; Phase 1 — partition pages into the emit set (in result) and non-emit candidates
+         (let [temporal-metadata (.getTemporalMetadata page)]
+           (if (and (temporal-intersects? page) (.testMetadata page))
              (do
                (.add leaves page)
                (recur more-pages
                       (min smallest-valid-from (.getMinValidFrom temporal-metadata))
                       (max largest-valid-to (.getMaxValidTo temporal-metadata))
                       (min smallest-system-from (.getMinSystemFrom temporal-metadata))
-                      non-taken-pages))
+                      non-emit-candidates))
 
              (recur more-pages
-                    smallest-valid-from
-                    largest-valid-to
-                    smallest-system-from
-                    (cond-> non-taken-pages
+                    smallest-valid-from largest-valid-to smallest-system-from
+                    (cond-> non-emit-candidates
                       (Temporal/intersectsSystemTime temporal-metadata query-bounds)
                       (conj page)))))
 
+         ;; Phase 2 — for each non-emitted candidate, keep it if it may supersede/constrain the polygons in the result.
          (when (seq leaves)
-           (let [valid-time (TemporalDimension. smallest-valid-from largest-valid-to)]
-             (doseq [^Segment$PageMeta page non-taken-pages]
-               (let [temporal-metadata (.getTemporalMetadata page)
-                     obj-largest-system-from (.getMaxSystemFrom temporal-metadata)
-                     page-recency (.getRecency page)]
-                 (when (and (<= smallest-system-from obj-largest-system-from)
-                            (.intersects (TemporalDimension. (.getMinValidFrom temporal-metadata)
-                                                             (.getMaxValidTo temporal-metadata))
-                                         valid-time)
-                            (or (>= page-recency smallest-valid-from)
-                                (>= page-recency smallest-system-from)))
-                   (.add leaves page)))))
+           (let [envelope-vt (TemporalDimension. smallest-valid-from largest-valid-to)]
+             (doseq [^Segment$PageMeta page non-emit-candidates
+                     :let [tm (.getTemporalMetadata page)
+                           page-recency (.getRecency page)]
+                     :when (and 
+                             ;; if the max system-from of the candidate is before the min system-from of the emit set,
+                             ;; none of the rows in that file can affect the rows in the emit set.
+                             (<= smallest-system-from (.getMaxSystemFrom tm))
+
+                             ;; if the valid-time of the page doesn't intersect the valid-time envelope of the emit set,
+                             ;; then it can't affect the result.
+                             (.intersects (TemporalDimension. (.getMinValidFrom tm) (.getMaxValidTo tm))
+                                          envelope-vt)
+
+                             (or (>= page-recency smallest-valid-from)
+                                 (>= page-recency smallest-system-from)))]
+               (.add leaves page)))
+
            (vec leaves)))))))
 
 (defn- <-MemoryHashTrieNode [^MemoryHashTrie$Node node]

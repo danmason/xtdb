@@ -215,3 +215,16 @@
                                    (tu/->temporal-bounds 20251212 Long/MAX_VALUE))
 
                 (mapv :page)))))
+
+(t/deftest test-recency-excludes-from-emit
+  ;; A page with vf=2020, validTo=∞, and recency=2025. Models a historical trie:
+  ;; raw vt extends to ∞ (no explicit valid_to), but the polygon ended at recency=2025.
+  ;; Querying past the recency, the page can't contribute live rows — `temporal-intersects?`
+  ;; rules it out via the recency clause, regardless of the raw vt overlap.
+  (let [page (->MockPage 0 true (tu/->temporal-metadata 20200101 Long/MAX_VALUE) 20250101)
+        query-bounds (tu/->temporal-bounds 20260101 (inc 20260101) 20260101 (inc 20260101))]
+
+    (t/is (= []
+             (->> (trie/filter-pages [page] {:query-bounds query-bounds})
+                  (mapv :page)))
+          "page recency 20250101 fails `min(query.lower) < page.recency` (20260101 ≮ 20250101)")))
