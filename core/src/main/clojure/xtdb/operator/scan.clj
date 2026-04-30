@@ -310,16 +310,19 @@
 
                            (util/with-close-on-catch [!segments (LinkedList.)]
 
-                             (doseq [{:keys [^String trie-key]} (-> (cat/trie-state trie-catalog table)
-                                                                    (cat/current-tries)
-                                                                    (cat/filter-tries {:query-bounds temporal-bounds}))]
-                               (.add !segments
-                                     (BufferPoolSegment. allocator buffer-pool metadata-mgr table trie-key metadata-pred)))
+                             (let [filter-opts {:query-bounds temporal-bounds
+                                                :projects-temporal-cols? (boolean (some #{"_valid_from" "_valid_to" "_system_from" "_system_to"} col-names))}]
 
-                             (doseq [^TableSnapshot live-table-snap live-table-snaps]
-                               (.add !segments (.getSegment live-table-snap)))
+                               (doseq [{:keys [^String trie-key]} (-> (cat/trie-state trie-catalog table)
+                                                                      (cat/current-tries)
+                                                                      (cat/filter-tries filter-opts))]
+                                 (.add !segments
+                                       (BufferPoolSegment. allocator buffer-pool metadata-mgr table trie-key metadata-pred)))
 
-                             (let [merge-tasks (MergePlanner/planSync !segments (->path-pred iid-set) #(trie/filter-pages % {:query-bounds temporal-bounds}))]
+                               (doseq [^TableSnapshot live-table-snap live-table-snaps]
+                                 (.add !segments (.getSegment live-table-snap)))
+
+                               (let [merge-tasks (MergePlanner/planSync !segments (->path-pred iid-set) #(trie/filter-pages % filter-opts))]
                                (cond-> (ScanCursor. allocator (vec col-names) col-preds
                                                     temporal-bounds
                                                     !segments (.iterator ^Iterable merge-tasks)
@@ -339,7 +342,7 @@
                                                                                                                  (update-keys
                                                                                                                   (update-vals (into {} (filter val) (or pushdown-iids {}))
                                                                                                                                (fn [s] {:iids s}))
-                                                                                                                  str)))))))))))}))))
+                                                                                                                  str))))))))))))}))))
 
 (defmethod lp/emit-expr :scan [scan-expr {:keys [^IScanEmitter scan-emitter db-cat scan-vec-types, param-types]}]
   (assert db-cat)

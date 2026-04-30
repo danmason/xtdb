@@ -51,24 +51,28 @@
 
         (t/is (= #{1} (->> (trie/filter-pages [(->mock-page 0 false vt0 vt3 sf1 (dec sf2))
                                                (->mock-page 1 true vt1 vt2 sf2 sf2)]
-                                              {:query-bounds (tu/->temporal-bounds vt0 Long/MAX_VALUE sf1 Long/MAX_VALUE)})
+                                              {:query-bounds (tu/->temporal-bounds vt0 Long/MAX_VALUE sf1 Long/MAX_VALUE)
+                                               :projects-temporal-cols? true})
                            ->pages))
               "Take page 1. Page 0 system from strictly before page 1.")
         (t/is (= #{0 1} (->> (trie/filter-pages [(->mock-page 0 false vt0 (inc vt1) sf1 sf2)
                                                  (->mock-page 1 true vt1 vt2 sf2 sf2)]
-                                                {:query-bounds (tu/->temporal-bounds vt0 Long/MAX_VALUE sf1 Long/MAX_VALUE)})
+                                                {:query-bounds (tu/->temporal-bounds vt0 Long/MAX_VALUE sf1 Long/MAX_VALUE)
+                                                 :projects-temporal-cols? true})
                              ->pages))
               "Take page 1. Page 0 system from overlaps.")
 
         (t/is (= #{1} (->> (trie/filter-pages [(->mock-page 0 false vt0 vt1 sf1 (inc sf2))
                                                (->mock-page 1 true vt1 vt2 sf2 sf2)]
-                                              {:query-bounds (tu/->temporal-bounds vt0 Long/MAX_VALUE sf1 Long/MAX_VALUE)})
+                                              {:query-bounds (tu/->temporal-bounds vt0 Long/MAX_VALUE sf1 Long/MAX_VALUE)
+                                               :projects-temporal-cols? true})
                            ->pages))
               "Take page 1. Page 0 valid-time strictly before page 1.")
 
         (t/is (= #{0 1} (->> (trie/filter-pages [(->mock-page 0 false vt0 (inc vt1) sf1 (inc sf2))
                                                  (->mock-page 1 true vt1 vt2 sf2 sf2)]
-                                                {:query-bounds (tu/->temporal-bounds vt0 Long/MAX_VALUE sf1 Long/MAX_VALUE)})
+                                                {:query-bounds (tu/->temporal-bounds vt0 Long/MAX_VALUE sf1 Long/MAX_VALUE)
+                                                 :projects-temporal-cols? true})
                              ->pages))
               "Take page 1. Page 0 valid-time overlpas."))
 
@@ -76,13 +80,15 @@
         ;; TODO could we filter page 0 in the two assertions below?
         (t/is (= #{0 1} (->> (trie/filter-pages [(->mock-page 0 false vt0 vt2 sf1 sf2)
                                                  (->mock-page 1 true vt1 vt2 sf2 sf2)]
-                                                {:query-bounds (tu/->temporal-bounds vt0 Long/MAX_VALUE (inc sf2) Long/MAX_VALUE)})
+                                                {:query-bounds (tu/->temporal-bounds vt0 Long/MAX_VALUE (inc sf2) Long/MAX_VALUE)
+                                                 :projects-temporal-cols? true})
                              ->pages))
               "Take page 1. Page 0 system from overlaps. Query system-time bounds don't touch page 0")
 
         (t/is (= #{0 1} (->> (trie/filter-pages [(->mock-page 0 false vt0 vt1 sf1 (inc sf2))
                                                  (->mock-page 1 true (dec vt1) vt2 sf2 sf2)]
-                                                {:query-bounds (tu/->temporal-bounds (inc vt1) Long/MAX_VALUE sf1 Long/MAX_VALUE)})
+                                                {:query-bounds (tu/->temporal-bounds (inc vt1) Long/MAX_VALUE sf1 Long/MAX_VALUE)
+                                                 :projects-temporal-cols? true})
                              ->pages))
               "Take page 1. Page 0 valid-time overlpas. Query valid-time bounds don't touch page 0")))
 
@@ -92,40 +98,52 @@
 
         (t/is (= #{1} (->> (trie/filter-pages [(->mock-page 1 true vt1 vt2 sf2 sf2)
                                                (->mock-page 2 false vt2 vt3 sf3 sf3)]
-                                              {:query-bounds (tu/->temporal-bounds vt0 Long/MAX_VALUE sf1 Long/MAX_VALUE)})
+                                              {:query-bounds (tu/->temporal-bounds vt0 Long/MAX_VALUE sf1 Long/MAX_VALUE)
+                                               :projects-temporal-cols? true})
                            ->pages))
               "Take page 1. Page 2 doesn't overlap in valid-time")
 
         (t/is (= #{1 2} (->> (trie/filter-pages [(->mock-page 1 true vt1 (inc vt2) sf2 sf2)
                                                  (->mock-page 2 false vt2 vt3 sf3 sf3)]
-                                                {:query-bounds (tu/->temporal-bounds vt0 Long/MAX_VALUE sf1 Long/MAX_VALUE)})
+                                                {:query-bounds (tu/->temporal-bounds vt0 Long/MAX_VALUE sf1 Long/MAX_VALUE)
+                                                 :projects-temporal-cols? true})
                              ->pages))
               "Take page 1. Page 2 overlaps in valid-time")
 
         (t/is (= #{1 2} (->> (trie/filter-pages [(->mock-page 1 true vt1 (inc vt2) sf2 sf2)
                                                  (->mock-page 2 false vt2 (inc vt3) sf3 sf3)]
-                                                {:query-bounds (tu/->temporal-bounds vt0 Long/MAX_VALUE sf1 Long/MAX_VALUE)})
+                                                {:query-bounds (tu/->temporal-bounds vt0 Long/MAX_VALUE sf1 Long/MAX_VALUE)
+                                                 :projects-temporal-cols? true})
                              ->pages))
               "Take page 1. Page 2 can bound page 1 and we can't filter newer pages (no constraints on query system-time)."))
 
       (t/testing "Constraints on query bounds"
-        ;; TODO can 2 be filtered here?
         (t/is (= #{1 2} (->> (trie/filter-pages [(->mock-page 1 true vt1 (inc vt2) sf2 sf2)
                                                  (->mock-page 2 false vt2 vt3 sf3 sf3)]
-                                                {:query-bounds (tu/->temporal-bounds vt1 (dec vt2) sf1 Long/MAX_VALUE)})
+                                                {:query-bounds (tu/->temporal-bounds vt1 (dec vt2) sf1 Long/MAX_VALUE)
+                                                 :projects-temporal-cols? true})
                              ->pages))
-              "Take page 1. Page 2 overlaps in valid-time")
+              "Take page 1 and page 2. Page 2 is constrain-only — kept because the query projects temporal cols.")
+
+        (t/is (= #{1} (->> (trie/filter-pages [(->mock-page 1 true vt1 (inc vt2) sf2 sf2)
+                                               (->mock-page 2 false vt2 vt3 sf3 sf3)]
+                                              {:query-bounds (tu/->temporal-bounds vt1 (dec vt2) sf1 Long/MAX_VALUE)
+                                               :projects-temporal-cols? false})
+                           ->pages))
+              "Take page 1 only. Page 2 is constrain-only — dropped because the query projects no temporal col.")
 
         (t/is (= #{1} (->> (trie/filter-pages [(->mock-page 1 true vt1 (inc vt2) sf2 sf3)
                                                (->mock-page 2 false vt2 (inc vt3) sf3 sf3)]
-                                              {:query-bounds (tu/->temporal-bounds vt0 Long/MAX_VALUE sf1 sf3)})
+                                              {:query-bounds (tu/->temporal-bounds vt0 Long/MAX_VALUE sf1 sf3)
+                                               :projects-temporal-cols? true})
                            ->pages))
               "Take page 1. Page 2 can bound page 1 and we can filter newer pages because of query system-time constraints.")))
 
     (t/is (= #{0 1 2} (->> (trie/filter-pages [(->mock-page 0 true vt0 Long/MAX_VALUE sf1 sf1)
                                                (->mock-page 1 false vt1 vt2 sf2 sf2)
                                                (->mock-page 2 false vt2 vt3 sf3 sf3)]
-                                              {:query-bounds (TemporalBounds.)})
+                                              {:query-bounds (TemporalBounds.)
+                                               :projects-temporal-cols? true})
                            ->pages))
           "All pages pages need to be taken if later pages bound valid-time")))
 
@@ -135,10 +153,13 @@
                             #inst "2021-01-01" #inst "2022-01-01" #inst "2023-01-01"])]
 
     (letfn [(query-bounds+temporal-page-metadata->pages [temporal-page-metadata query-bounds]
+              ;; this deftest covers temporal filtering, not the constrain-drop optimisation;
+              ;; the helper pins `:projects-temporal-cols? true` so the assertions below
+              ;; reflect the unoptimised behaviour.
               (->> (trie/filter-pages
                     (for [[page min-vf max-vt] temporal-page-metadata]
                       (->mock-page page min-vf max-vt))
-                    {:query-bounds query-bounds})
+                    {:query-bounds query-bounds, :projects-temporal-cols? true})
                    (mapv :page)))]
 
       (t/testing "non intersecting pages and no retrospective updates"
@@ -213,7 +234,8 @@
   (t/is (= [1]
            (->> (trie/filter-pages [(->MockPage 1 true (tu/->temporal-metadata 20251205 Long/MAX_VALUE) Long/MAX_VALUE)
                                     (->MockPage 2 false (tu/->temporal-metadata 20250706 Long/MAX_VALUE 20250707 20251208) 20250707)]
-                                   {:query-bounds (tu/->temporal-bounds 20251212 Long/MAX_VALUE)})
+                                   {:query-bounds (tu/->temporal-bounds 20251212 Long/MAX_VALUE)
+                                    :projects-temporal-cols? true})
 
                 (mapv :page)))))
 
@@ -226,6 +248,30 @@
         query-bounds (tu/->temporal-bounds 20260101 (inc 20260101) 20260101 (inc 20260101))]
 
     (t/is (= []
-             (->> (trie/filter-pages [page] {:query-bounds query-bounds})
+             (->> (trie/filter-pages [page] {:query-bounds query-bounds, :projects-temporal-cols? true})
                   (mapv :page)))
           "page recency 20250101 fails `min(query.lower) < page.recency` (20260101 ≮ 20250101)")))
+
+(t/deftest test-projects-temporal-cols-flag
+  ;; The four corners of the optimisation:
+  ;;
+  ;; - emit page (vt-intersects-query, content matches): kept under both flag values.
+  ;; - supersede page (vt-intersects-query, content fails): kept under both flag values
+  ;;   (still affects multiplicity).
+  ;; - constrain-only page (vt-disjoint from query, vt-overlaps emit envelope): kept when
+  ;;   flag is true; dropped when flag is false (its only contribution is to a temporal
+  ;;   column the consumer doesn't write).
+  (let [pages [(->mock-page 0 true 0 30 0 0)         ; emit
+               (->mock-page 1 false 0 30 0 0)        ; supersede — vt-intersects, content fails
+               (->mock-page 2 true 15 25 0 0)]       ; constrain-only — vt 15→25, disjoint from query 0→10, overlaps envelope 0→30
+        query-bounds (tu/->temporal-bounds 0 10)]
+
+    (t/is (= #{0 1 2}
+             (->> (trie/filter-pages pages {:query-bounds query-bounds, :projects-temporal-cols? true})
+                  (into #{} (map :page))))
+          "with :projects-temporal-cols? true: emit, supersede, and constrain-only all kept")
+
+    (t/is (= #{0 1}
+             (->> (trie/filter-pages pages {:query-bounds query-bounds, :projects-temporal-cols? false})
+                  (into #{} (map :page))))
+          "with :projects-temporal-cols? false: emit and supersede kept; constrain-only dropped")))

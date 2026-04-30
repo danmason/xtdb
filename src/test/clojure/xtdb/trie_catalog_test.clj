@@ -78,7 +78,7 @@
       (->> (into #{} (map :trie-key)))))
 
 (t/deftest earilier-recency-files-can-effect-splitting-in-later-buckets-4097
-  (let [opts {:query-bounds (tu/->temporal-bounds 20220101 20220102)}]
+  (let [opts {:query-bounds (tu/->temporal-bounds 20220101 20220102), :projects-temporal-cols? true}]
     (t/is (= #{"l0-recency-2019-block-00" "l0-current-block-00"}
              (filter-tries [["l0-recency-2019-block-00" nil [20190101 20210101]]
                             ["l0-current-block-00" nil [20200101 Long/MAX_VALUE 20190101]]]
@@ -88,7 +88,7 @@
 (t/deftest test-filter-tries
   (let [current-time 20200101]
     (t/testing "recency filtering (temporal metadata always overlaps the query)"
-      (let [opts {:query-bounds (tu/->temporal-bounds current-time (inc current-time))}]
+      (let [opts {:query-bounds (tu/->temporal-bounds current-time (inc current-time)), :projects-temporal-cols? true}]
         (t/is (empty? (filter-tries [] opts)))
 
         (t/is (= #{"l0-current-block-02" "l0-current-block-01" "l0-current-block-00"}
@@ -112,10 +112,14 @@
                                opts))
               "newer recency files get taken"))
 
-      (let [all-st-opts {:query-bounds (tu/->temporal-bounds current-time (inc current-time) Long/MIN_VALUE Long/MAX_VALUE)}
-            all-vt-opts {:query-bounds (tu/->temporal-bounds Long/MIN_VALUE Long/MAX_VALUE current-time (inc current-time))}
-            st-range-opts {:query-bounds (tu/->temporal-bounds current-time (inc current-time) current-time Long/MAX_VALUE)}
-            vt-range-opts {:query-bounds (tu/->temporal-bounds current-time Long/MAX_VALUE current-time (inc current-time))}]
+      (let [all-st-opts {:query-bounds (tu/->temporal-bounds current-time (inc current-time) Long/MIN_VALUE Long/MAX_VALUE)
+                         :projects-temporal-cols? true}
+            all-vt-opts {:query-bounds (tu/->temporal-bounds Long/MIN_VALUE Long/MAX_VALUE current-time (inc current-time))
+                         :projects-temporal-cols? true}
+            st-range-opts {:query-bounds (tu/->temporal-bounds current-time (inc current-time) current-time Long/MAX_VALUE)
+                           :projects-temporal-cols? true}
+            vt-range-opts {:query-bounds (tu/->temporal-bounds current-time Long/MAX_VALUE current-time (inc current-time))
+                           :projects-temporal-cols? true}]
 
         (t/is (= #{"l01-current-block-00" "l01-recency-2019-block-01" "l01-current-block-01" "l01-recency-2021-block-01"}
                  (filter-tries [["l01-current-block-00"      nil      [20200101 Long/MAX_VALUE]]
@@ -144,7 +148,7 @@
               "system-time range or valid-time range can filter certain pages")))
 
     (t/testing "filtering via temporal metadata"
-      (let [opts {:query-bounds (tu/->temporal-bounds current-time Long/MAX_VALUE)}]
+      (let [opts {:query-bounds (tu/->temporal-bounds current-time Long/MAX_VALUE), :projects-temporal-cols? true}]
 
         (t/is (= #{"l0-current-block-00" "l0-current-block-01"}
                  (filter-tries [["l0-recency-2021-block-00" 20210101 [20180101 20190101]]
@@ -154,7 +158,7 @@
                                opts))
               "recency doesn't filter, temporal metadata does filter"))
 
-      (let [opts {:query-bounds (tu/->temporal-bounds current-time 20210101)}]
+      (let [opts {:query-bounds (tu/->temporal-bounds current-time 20210101), :projects-temporal-cols? true}]
 
         (t/is (= #{"l0-current-block-01" "l0-current-block-02"}
                  (filter-tries [["l0-current-block-00" nil [20100101 20190101]]

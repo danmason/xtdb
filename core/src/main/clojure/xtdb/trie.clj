@@ -104,18 +104,17 @@
         (.setPageLimit page-limit))
       (.build)))
 
-(defn filter-pages
-  "Returns the subset of pages that contribute to the query result.
+(defn filter-pages [pages {:keys [^TemporalBounds query-bounds projects-temporal-cols?]}]
+  ;; Pages are categorised by what they can do to the result:
+  ;;
+  ;; - **emit** — rows in this page can appear in the output.
+  ;;   Temporal bounds match the query AND content predicate (`testMetadata`) matches.
+  ;; - **supersede** — rows here can affect an emit row's multiplicity - whether it's duplicated (U-shaped) or filtered out.
+  ;;   Temporal bounds match the query; content predicate need not.
+  ;; - **constrain** — rows here can affect the bounds of the resulting polygons.
+  ;;   Temporal bounds disjoint from the query but overlapping the emit envelope.
+  ;;   We exclude these if the query doesn't project temporal columns
 
-  Pages are categorised by what they can do to the result:
-
-  - **emit** — rows in this page can appear in the output.
-    Temporal bounds match the query AND content predicate (`testMetadata`) matches.
-  - **supersede** — rows here can affect an emit row's multiplicity - whether it's duplicated (U-shaped) or filtered out.
-    Temporal bounds match the query; content predicate need not.
-  - **constrain** — rows here can affect the bounds of the resulting polygons.
-    Temporal bounds disjoint from the query but overlapping the emit envelope."
-  [pages {:keys [^TemporalBounds query-bounds]}]
   (let [leaves (ArrayList.)
         min-query-recency (long (min (.getLower (.getValidTime query-bounds))
                                      (.getLower (.getSystemTime query-bounds))))
@@ -146,8 +145,8 @@
                      (Temporal/intersectsSystemTime temporal-metadata query-bounds)
                      (conj page)))))
 
-        ;; Phase 2 — for each non-emitted candidate, keep it if it may supersede/constrain the polygons in the result.
         (when (seq leaves)
+          ;; Phase 2 - include all of the pages that may affect the rows in phase 1.
           (let [envelope-vt (TemporalDimension. smallest-valid-from largest-valid-to)]
             (doseq [^Segment$PageMeta page non-emit-candidates
                     :let [tm (.getTemporalMetadata page)
@@ -157,13 +156,18 @@
                             ;; none of the rows in that file can affect the rows in the emit set.
                             (<= smallest-system-from (.getMaxSystemFrom tm))
 
-                            ;; if the valid-time of the page doesn't intersect the valid-time envelope of the emit set,
-                            ;; then it can't affect the result.
-                            (.intersects (TemporalDimension. (.getMinValidFrom tm) (.getMaxValidTo tm))
-                                         envelope-vt)
+                            (if projects-temporal-cols?
+                              ;; keep candidates whose vt overlaps the emit envelope
+                              ;; (covers both supersede and constrain — the latter feed `_valid_from` etc.).
+                              (and (.intersects (TemporalDimension. (.getMinValidFrom tm) (.getMaxValidTo tm))
+                                                envelope-vt)
+                                   (or (>= page-recency smallest-valid-from)
+                                       (>= page-recency smallest-system-from)))
 
-                            (or (>= page-recency smallest-valid-from)
-                                (>= page-recency smallest-system-from)))]
+                              ;; keep only candidates that vt-intersect the query itself
+                              ;; (supersede only; constrain-only contribution is wasted I/O)
+                              (temporal-intersects? page)))]
+
               (.add leaves page)))
 
           (vec leaves))))))
