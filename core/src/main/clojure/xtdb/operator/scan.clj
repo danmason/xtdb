@@ -312,7 +312,7 @@
 
                              (doseq [{:keys [^String trie-key]} (-> (cat/trie-state trie-catalog table)
                                                                     (cat/current-tries)
-                                                                    (cat/filter-tries temporal-bounds))]
+                                                                    (cat/filter-tries {:query-bounds temporal-bounds}))]
                                (.add !segments
                                      (BufferPoolSegment. allocator buffer-pool metadata-mgr table trie-key metadata-pred)))
 

@@ -369,9 +369,9 @@
     (or (some-> trie-metadata .getTemporalMetadata)
         no-temporal-metadata)))
 
-(defn filter-tries [tries query-bounds]
+(defn filter-tries [tries opts]
   (-> (map map->CatalogEntry tries)
-      (trie/filter-pages {:query-bounds query-bounds})))
+      (trie/filter-pages opts)))
 
 (defn <-trie-metadata [^TrieMetadata trie-metadata]
   (when (and trie-metadata (.hasTemporalMetadata trie-metadata))

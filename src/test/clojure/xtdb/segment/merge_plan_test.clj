@@ -124,7 +124,8 @@
 
     (t/is (= #{0 1 2} (->> (trie/filter-pages [(->mock-page 0 true vt0 Long/MAX_VALUE sf1 sf1)
                                                (->mock-page 1 false vt1 vt2 sf2 sf2)
-                                               (->mock-page 2 false vt2 vt3 sf3 sf3)])
+                                               (->mock-page 2 false vt2 vt3 sf3 sf3)]
+                                              {:query-bounds (TemporalBounds.)})
                            ->pages))
           "All pages pages need to be taken if later pages bound valid-time")))
 
@@ -212,7 +213,7 @@
   (t/is (= [1]
            (->> (trie/filter-pages [(->MockPage 1 true (tu/->temporal-metadata 20251205 Long/MAX_VALUE) Long/MAX_VALUE)
                                     (->MockPage 2 false (tu/->temporal-metadata 20250706 Long/MAX_VALUE 20250707 20251208) 20250707)]
-                                   (tu/->temporal-bounds 20251212 Long/MAX_VALUE))
+                                   {:query-bounds (tu/->temporal-bounds 20251212 Long/MAX_VALUE)})
 
                 (mapv :page)))))
 
