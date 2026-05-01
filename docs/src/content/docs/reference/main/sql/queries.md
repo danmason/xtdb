@@ -150,12 +150,14 @@ return rr.Diagram(rr.Choice(0, wrapped, base, join, crossJoin, naturalJoin, subq
 
 ```railroad
 const asOf = rr.Sequence("AS", "OF", "<timestamp>")
-const fromTo = rr.Sequence("FROM", "<timestamp>", "TO", "<timestamp>")
+const fromTo = rr.Sequence(rr.Optional("ONLY", "skip"), "FROM", "<timestamp>", "TO", "<timestamp>")
 const between = rr.Sequence("BETWEEN", "<timestamp>", "AND", "<timestamp>")
 const timePeriodOpts = rr.Choice(0, asOf, fromTo, between, "ALL")
 const timePeriod = rr.Choice(0, "VALID_TIME", "SYSTEM_TIME")
 return rr.Diagram(rr.Sequence("FOR", rr.Choice(0, rr.Sequence(timePeriod, timePeriodOpts), rr.Sequence("ALL", timePeriod))))
 ```
+
+Note: `ONLY` is only valid with `VALID_TIME`, not `SYSTEM_TIME`.
 
 The valid-time/system-time filters for a given table take precedence as follows:
 
@@ -165,6 +167,31 @@ The valid-time/system-time filters for a given table take precedence as follows:
 4. Then as follows:
    * System time defaults to 'as best known' - the latest processed transaction on the queried node.
    * Valid time defaults to 'as of now' - the clock time taken either from `CLOCK_TIME` (if overridden) or the actual clock time on the queried node.
+
+#### `FOR VALID_TIME ONLY FROM X TO Y` (v2.2+)
+
+`FOR VALID_TIME ONLY FROM X TO Y` selects rows whose valid-time period overlaps `[X, Y)` *and* clamps the projected `_valid_from` / `_valid_to` to that window.
+Rows whose stored period extends outside `[X, Y)` are returned with their bounds tightened to `X` / `Y`; rows fully inside the window are returned unchanged.
+The `ONLY` form is specific to `VALID_TIME` — there is no `FOR SYSTEM_TIME ONLY`.
+
+Compare with the plain `FROM`/`TO` form, which matches the same rows but returns each row's *stored* `_valid_from` / `_valid_to`:
+
+```sql
+-- selects rows overlapping [2003, 2007), returns stored bounds
+SELECT _id, _valid_from, _valid_to FROM users
+  FOR VALID_TIME FROM DATE '2003-01-01' TO DATE '2007-01-01';
+-- => row stored 2000–2010 returns _valid_from=2000, _valid_to=2010
+
+-- same rows, but bounds clamped into [2003, 2007)
+SELECT _id, _valid_from, _valid_to FROM users
+  FOR VALID_TIME ONLY FROM DATE '2003-01-01' TO DATE '2007-01-01';
+-- => row stored 2000–2010 returns _valid_from=2003, _valid_to=2007
+```
+
+Use `ONLY` when you want each row's projected validity to reflect the *intersection* of the row with the query window — e.g. computing how long a row was valid within a reporting period, or feeding a downstream consumer that expects bounds within the window.
+Use the plain form when you want to know the row's *full* stored validity and only use `[X, Y)` to filter which rows come back.
+
+`ONLY` also lets the engine skip pages that would only contribute to the parts of `_valid_from` / `_valid_to` that get clamped away, so it is generally faster than projecting a `GREATEST` / `LEAST` clamp on top of the plain form.
 
 ## Expressions
 
