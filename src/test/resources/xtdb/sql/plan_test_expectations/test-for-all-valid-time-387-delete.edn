@@ -8,4 +8,5 @@
   [:scan
    {:table #xt/table users,
     :columns [_valid_to _valid_from _iid],
+    :clamp-valid-time? true,
     :for-valid-time :all-time}]]]

@@ -262,10 +262,16 @@
 (defrecord TableTimePeriodSpecificationVisitor [expr-visitor]
   SqlVisitor
   (visitQueryValidTimePeriodSpecification [this ctx]
-    (if (.ALL ctx)
-      :all-time
-      (-> (.tableTimePeriodSpecification ctx)
-          (.accept this))))
+    (cond
+      (.ALL ctx) {:for-valid-time :all-time}
+
+      (.ONLY ctx) {:for-valid-time [:in
+                                    (-> ctx (.from) (.accept expr-visitor))
+                                    (-> ctx (.to) (.accept expr-visitor))]
+                   :clamp-valid-time? true}
+
+      :else {:for-valid-time (-> (.tableTimePeriodSpecification ctx)
+                                 (.accept this))}))
 
   (visitQuerySystemTimePeriodSpecification [this ctx]
     (if (.ALL ctx)
@@ -310,7 +316,7 @@
    plan])
 
 (defrecord BaseTable [env, ^TableRef table-ref
-                      for-valid-time for-system-time
+                      for-valid-time clamp-valid-time? for-system-time
                       table-alias unique-table-alias cols
                       ^Map !reqd-cols]
   Scope
@@ -345,6 +351,7 @@
        (cond-> [:scan (cond-> {:table table-ref
                                :columns scan-cols}
                         for-vt (assoc :for-valid-time for-vt)
+                        clamp-valid-time? (assoc :clamp-valid-time? true)
                         for-st (assoc :for-system-time for-st))]
          (or valid-time-col? sys-time-col?) (wrap-temporal-periods scan-cols valid-time-col? sys-time-col?))])))
 
@@ -690,13 +697,15 @@
                         1 (.accept ^ParserRuleContext (first specs) (->TableTimePeriodSpecificationVisitor expr-visitor))
                         :else (add-err! env (->MultipleTimePeriodSpecifications))))]
 
-              ;; HACK we scan `xt.not_found` until a not-found table can be an error, #4467
-              (->BaseTable env (or table (table/->ref default-db "xt" "not_found"))
-                           (<-table-time-period-specification (.queryValidTimePeriodSpecification ctx))
-                           (<-table-time-period-specification (.querySystemTimePeriodSpecification ctx))
-                           table-alias unique-table-alias
-                           (->insertion-ordered-set (or cols table-cols))
-                           (HashMap.)))))))
+              (let [{:keys [for-valid-time clamp-valid-time?]}
+                    (<-table-time-period-specification (.queryValidTimePeriodSpecification ctx))]
+                ;; HACK we scan `xt.not_found` until a not-found table can be an error, #4467
+                (->BaseTable env (or table (table/->ref default-db "xt" "not_found"))
+                             for-valid-time clamp-valid-time?
+                             (<-table-time-period-specification (.querySystemTimePeriodSpecification ctx))
+                             table-alias unique-table-alias
+                             (->insertion-ordered-set (or cols table-cols))
+                             (HashMap.))))))))
 
   (visitJoinTable [this ctx]
     (let [l (-> (.tableReference ctx 0) (.accept this))
@@ -2914,23 +2923,18 @@
   (plan-rel [{{:keys [default-db]} :env}]
     [:rename {:prefix unique-table-alias}
      [:scan (cond-> {:table (table/->ref default-db (symbol table-name))
-                     :columns (vec (.keySet !reqd-cols))}
+                     :columns (vec (.keySet !reqd-cols))
+                     :clamp-valid-time? true}
               for-valid-time (assoc :for-valid-time for-valid-time))]]))
 
 (def ^:private vf-col (->col-sym "_valid_from"))
 (def ^:private vt-col (->col-sym "_valid_to"))
 
 (defn- dml-stmt-valid-time-portion [from-expr to-expr]
+  ;; The DML scan sets `:clamp-valid-time? true` so `_valid_from` / `_valid_to` arrive
+  ;; clamped to `[from-expr, to-expr)` — no post-scan clamp needed.
   {:for-valid-time [:in (or from-expr time/start-of-time) to-expr]
-   :projection [{vf-col (xt/template
-                         (greatest ~vf-col (cast (coalesce ~from-expr xtdb/start-of-time) #xt/type :instant)))}
-
-                {vt-col (if to-expr
-                          (xt/template
-                           (least (coalesce ~vt-col xtdb/end-of-time)
-                                  (coalesce (cast ~to-expr #xt/type :instant) xtdb/end-of-time)))
-
-                          vt-col)}]})
+   :projection [vf-col vt-col]})
 
 (defrecord DmlValidTimeExtentsVisitor [env scope]
   SqlVisitor
@@ -3018,6 +3022,7 @@
           [:order-by {:order-specs [[_iid] [_valid_from]]}
            [:scan {:table ~table
                    :for-valid-time [:in ~valid-from ~valid-to]
+                   :clamp-valid-time? true
                    :columns [_iid _valid_from _valid_to
                              ~@known-cols]}]]]]]]])))
 

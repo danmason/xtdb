@@ -274,4 +274,11 @@
     (t/is (= #{0 1}
              (->> (trie/filter-pages pages {:query-bounds query-bounds, :projects-temporal-cols? false})
                   (into #{} (map :page))))
-          "with :projects-temporal-cols? false: emit and supersede kept; constrain-only dropped")))
+          "with :projects-temporal-cols? false: emit and supersede kept; constrain-only dropped")
+
+    (t/is (= #{0 1}
+             (->> (trie/filter-pages pages {:query-bounds query-bounds
+                                            :projects-temporal-cols? true
+                                            :clamp-valid-time? true})
+                  (into #{} (map :page))))
+          "with :clamp-valid-time? true: constrain-only dropped even though temporal cols are projected — its only contribution would be clamped away")))

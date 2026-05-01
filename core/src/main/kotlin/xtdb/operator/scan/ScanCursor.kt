@@ -18,18 +18,23 @@ import xtdb.util.safeMap
 import java.util.*
 import java.util.Comparator.comparing
 import java.util.function.Consumer
+import kotlin.math.max
+import kotlin.math.min
 
 class ScanCursor(
     private val al: BufferAllocator,
 
     private val colNames: List<ColumnName>, private val colPreds: Map<ColumnName, SelectionSpec>,
-    private val temporalBounds: TemporalBounds,
+    private val temporalBounds: TemporalBounds, private val clampValidTime: Boolean,
 
     private val segments: List<Segment<*>>,
     private val mergeTasks: Iterator<MergeTask>,
 
     private val schema: Map<String, Any>, private val args: RelationReader
 ) : ICursor {
+
+    private val vtLower = temporalBounds.validTime.lower
+    private val vtUpper = temporalBounds.validTime.upper
 
     override val cursorType get() = "scan"
     override val childCursors get() = emptyList<ICursor>()
@@ -89,7 +94,9 @@ class ScanCursor(
                                     temporalBounds.intersects(validFrom, validTo, sysFrom, sysTo)
                                     && validFrom != validTo && sysFrom != sysTo
                                 ) {
-                                    bitemporalConsumer.accept(leafPtr.relIdx, idx, validFrom, validTo, sysFrom, sysTo)
+                                    val outValidFrom = if (clampValidTime) max(validFrom, vtLower) else validFrom
+                                    val outValidTo = if (clampValidTime) min(validTo, vtUpper) else validTo
+                                    bitemporalConsumer.accept(leafPtr.relIdx, idx, outValidFrom, outValidTo, sysFrom, sysTo)
                                 }
                             }
                         }

@@ -149,6 +149,56 @@
         (t/is (= [{:last-updated "3000"}]
                  (query-at "SELECT last_updated FROM foo FOR ALL VALID_TIME WHERE foo._VALID_TIME CONTAINS DATE '3500-01-01'" tx)))))))
 
+(t/deftest valid-time-only-clamps-projection
+  ;; FOR VALID_TIME ONLY FROM X TO Y clamps the projected _valid_from / _valid_to
+  ;; to within [X, Y); the plain FROM/TO form returns the row's stored bounds.
+
+  (let [tx (xt/execute-tx tu/*node* [[:put-docs {:into :foo, :valid-from #inst "2000", :valid-to #inst "2010"}
+                                       {:xt/id 1, :v "decade"}]
+                                      [:put-docs {:into :foo, :valid-from #inst "2004", :valid-to #inst "2006"}
+                                       {:xt/id 2, :v "inside"}]])]
+
+    (t/testing "ONLY clamps when stored polygon extends outside the window"
+      (t/is (= [{:xt/id 1, :v "decade",
+                 :valid-from (time/->zdt #inst "2003"), :valid-to (time/->zdt #inst "2007")}]
+               (query-at "SELECT _id, v, _valid_from AS valid_from, _valid_to AS valid_to FROM foo
+                          FOR VALID_TIME ONLY FROM TIMESTAMP '2003-01-01 00:00:00+00:00' TO TIMESTAMP '2007-01-01 00:00:00+00:00'
+                          WHERE _id = 1"
+                         tx))))
+
+    (t/testing "without ONLY, projected bounds are the row's stored bounds"
+      (t/is (= [{:xt/id 1, :v "decade",
+                 :valid-from (time/->zdt #inst "2000"), :valid-to (time/->zdt #inst "2010")}]
+               (query-at "SELECT _id, v, _valid_from AS valid_from, _valid_to AS valid_to FROM foo
+                          FOR VALID_TIME FROM TIMESTAMP '2003-01-01 00:00:00+00:00' TO TIMESTAMP '2007-01-01 00:00:00+00:00'
+                          WHERE _id = 1"
+                         tx))))
+
+    (t/testing "ONLY is a no-op when the row's polygon is fully inside the window"
+      (t/is (= [{:xt/id 2, :v "inside",
+                 :valid-from (time/->zdt #inst "2004"), :valid-to (time/->zdt #inst "2006")}]
+               (query-at "SELECT _id, v, _valid_from AS valid_from, _valid_to AS valid_to FROM foo
+                          FOR VALID_TIME ONLY FROM TIMESTAMP '2003-01-01 00:00:00+00:00' TO TIMESTAMP '2007-01-01 00:00:00+00:00'
+                          WHERE _id = 2"
+                         tx))))
+
+    (t/testing "ONLY clamps only the side that exceeds the window"
+      (t/is (= [{:xt/id 1,
+                 :valid-from (time/->zdt #inst "2005"), :valid-to (time/->zdt #inst "2010")}]
+               (query-at "SELECT _id, _valid_from AS valid_from, _valid_to AS valid_to FROM foo
+                          FOR VALID_TIME ONLY FROM TIMESTAMP '2005-01-01 00:00:00+00:00' TO TIMESTAMP '2020-01-01 00:00:00+00:00'
+                          WHERE _id = 1"
+                         tx))
+            "lower bound clamped, upper preserved")
+
+      (t/is (= [{:xt/id 1,
+                 :valid-from (time/->zdt #inst "2000"), :valid-to (time/->zdt #inst "2005")}]
+               (query-at "SELECT _id, _valid_from AS valid_from, _valid_to AS valid_to FROM foo
+                          FOR VALID_TIME ONLY FROM TIMESTAMP '1990-01-01 00:00:00+00:00' TO TIMESTAMP '2005-01-01 00:00:00+00:00'
+                          WHERE _id = 1"
+                         tx))
+            "upper bound clamped, lower preserved"))))
+
 (t/deftest app-time-multiple-tables
   (let [tx (xt/execute-tx tu/*node* [[:put-docs {:into :foo, :valid-from #inst "2000", :valid-to #inst "2001"}
                                       {:xt/id :foo-doc, :last-updated "2001"}]
