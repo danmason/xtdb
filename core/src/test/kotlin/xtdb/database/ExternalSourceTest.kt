@@ -3,7 +3,6 @@ package xtdb.database
 import com.google.protobuf.StringValue
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.verify
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -16,8 +15,10 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import xtdb.NodeBase
 import xtdb.NodeBase.Companion.openBase
+import xtdb.SimulationTestUtils.Companion.createTrieCatalog
 import xtdb.api.log.*
 import xtdb.catalog.BlockCatalog
+import xtdb.catalog.TableCatalog
 import xtdb.compactor.Compactor
 import xtdb.error.Incorrect
 import xtdb.indexer.BlockUploader
@@ -41,16 +42,23 @@ class ExternalSourceTest {
     private lateinit var allocator: RootAllocator
     private lateinit var nodeBase: NodeBase
     private lateinit var bufferPool: MemoryStorage
+    private lateinit var liveIndex: LiveIndex
 
     @BeforeEach
     fun setUp() {
         allocator = RootAllocator()
         nodeBase = openBase()
         bufferPool = MemoryStorage(allocator, 0)
+
+        val blockCatalog = BlockCatalog("test", null)
+        val tableCatalog = TableCatalog(bufferPool).also { it.refresh(blockCatalog) }
+        val trieCatalog = createTrieCatalog()
+        liveIndex = LiveIndex.open(allocator, blockCatalog, tableCatalog, trieCatalog, "test")
     }
 
     @AfterEach
     fun tearDown() {
+        liveIndex.close()
         bufferPool.close()
         nodeBase.close()
         allocator.close()
@@ -84,7 +92,7 @@ class ExternalSourceTest {
     private fun leaderProc(
         sourceLog: InMemoryLog<SourceMessage> = InMemoryLog(InstantSource.system(), 0),
         replicaLog: InMemoryLog<ReplicaMessage> = InMemoryLog(InstantSource.system(), 0),
-        liveIndex: LiveIndex = mockk(relaxed = true),
+        liveIndex: LiveIndex = this.liveIndex,
         watchers: Watchers = Watchers(-1),
         extSource: ExternalSource = InMemoryExternalSource(),
         afterToken: ExternalSourceToken? = null,
@@ -113,19 +121,9 @@ class ExternalSourceTest {
     @Test
     fun `indexTx appends ResolvedTx to replica log`() = runTest {
         val replicaLog = InMemoryLog<ReplicaMessage>(InstantSource.system(), 0)
-        val watchers = Watchers(-1)
-        val liveIndex = mockk<LiveIndex>(relaxed = true) {
-            every { latestCompletedTx } returns null
-        }
         val extSource = InMemoryExternalSource()
 
-        leaderProc(
-            replicaLog = replicaLog,
-            liveIndex = liveIndex,
-            watchers = watchers,
-            extSource = extSource,
-            ctx = coroutineContext
-        ).use {
+        leaderProc(replicaLog = replicaLog, extSource = extSource, ctx = coroutineContext).use {
             extSource.channel.send(null)
             delay(500.milliseconds)
 
@@ -148,25 +146,28 @@ class ExternalSourceTest {
     }
 
     @Test
-    fun `subscription routes external events through commitTx`() = runTest {
+    fun `successive external events appear in the replica log with monotonic txIds`() = runTest {
         val replicaLog = InMemoryLog<ReplicaMessage>(InstantSource.system(), 0)
-        val watchers = Watchers(-1)
-        val liveIndex = mockk<LiveIndex>(relaxed = true)
         val extSource = InMemoryExternalSource()
 
-        val lp = leaderProc(
-            replicaLog = replicaLog, watchers = watchers, liveIndex = liveIndex,
-            extSource = extSource, ctx = coroutineContext
-        )
+        val lp = leaderProc(replicaLog = replicaLog, extSource = extSource, ctx = coroutineContext)
 
         try {
             extSource.channel.send(null)
             extSource.channel.send(null)
-
             delay(500.milliseconds)
 
-            verify(exactly = 2) { liveIndex.commitTx(any()) }
-            assertTrue(replicaLog.latestSubmittedOffset >= 1, "replica log should have 2 messages")
+            val resolvedTxs = mutableListOf<ReplicaMessage.ResolvedTx>()
+            val job = launch {
+                replicaLog.tailAll(-1) { records ->
+                    records.forEach { (it.message as? ReplicaMessage.ResolvedTx)?.let(resolvedTxs::add) }
+                }
+            }
+            delay(200.milliseconds)
+            job.cancelAndJoin()
+
+            assertEquals(listOf(0L, 1L), resolvedTxs.map { it.txId })
+            assertTrue(resolvedTxs.all { it.committed }, "both txs should be committed")
         } finally {
             lp.close()
         }
@@ -175,10 +176,7 @@ class ExternalSourceTest {
     @Test
     fun `processRecords flows source records through the leader processor`() = runTest {
         val replicaLog = InMemoryLog<ReplicaMessage>(InstantSource.system(), 0)
-        val liveIndex = mockk<LiveIndex>(relaxed = true) {
-            every { latestCompletedTx } returns null
-        }
-        val lp = leaderProc(replicaLog = replicaLog, liveIndex = liveIndex, ctx = coroutineContext)
+        val lp = leaderProc(replicaLog = replicaLog, ctx = coroutineContext)
 
         try {
             val now = Instant.now()
@@ -240,10 +238,10 @@ class ExternalSourceTest {
     }
 
     @Test
-    fun `error in commitTx propagates to watchers`() = runTest {
+    fun `fault in the commit pipeline tips watchers into Failed`() = runTest {
         val watchers = Watchers(-1)
         val liveIndex = mockk<LiveIndex>(relaxed = true) {
-            every { commitTx(any()) } throws RuntimeException("commit failed")
+            every { importTx(any()) } throws RuntimeException("commit pipeline fault")
         }
 
         val extSource = InMemoryExternalSource()

@@ -1,16 +1,14 @@
 package xtdb.indexer
 
 import io.micrometer.core.instrument.Counter
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.Channel.Factory.RENDEZVOUS
 import org.apache.arrow.memory.BufferAllocator
 import xtdb.NodeBase
 import xtdb.api.TransactionKey
-import xtdb.api.TransactionResult
+import xtdb.api.TransactionResult.Aborted
+import xtdb.api.TransactionResult.Committed
 import xtdb.api.log.*
 import xtdb.api.log.Log.AtomicProducer.Companion.withTx
 import xtdb.api.log.ReplicaMessage.BlockBoundary
@@ -18,11 +16,7 @@ import xtdb.api.log.ReplicaMessage.TriesAdded
 import xtdb.api.storage.Storage
 import xtdb.arrow.Relation
 import xtdb.arrow.asChannel
-import xtdb.database.Database
-import xtdb.database.DatabaseState
-import xtdb.database.DatabaseStorage
-import xtdb.database.ExternalSource
-import xtdb.database.ExternalSourceToken
+import xtdb.database.*
 import xtdb.error.Anomaly
 import xtdb.error.Interrupted
 import xtdb.garbage_collector.BlockGarbageCollector
@@ -32,21 +26,13 @@ import xtdb.indexer.TxIndexer.TxResult
 import xtdb.table.TableRef
 import xtdb.time.InstantUtil.asMicros
 import xtdb.time.InstantUtil.fromMicros
+import xtdb.trie.TrieKey
 import xtdb.tx.deserializeUserMetadata
+import xtdb.util.*
 import xtdb.util.StringUtil.asLexDec
 import xtdb.util.StringUtil.asLexHex
-import xtdb.util.asPath
-import xtdb.util.debug
-import xtdb.util.error
-import xtdb.util.logger
-import xtdb.util.trace
-import xtdb.util.warn
 import java.nio.ByteBuffer
-import java.time.Duration
-import java.time.Instant
-import java.time.InstantSource
-import java.time.ZoneId
-import java.time.ZonedDateTime
+import java.time.*
 import kotlin.coroutines.CoroutineContext
 
 private val LOG = LeaderLogProcessor::class.logger
@@ -115,52 +101,204 @@ class LeaderLogProcessor(
 
     private val blockFlusher = BlockFlusher(flushTimeout, blockCatalog)
 
-    // Serialises every writer to the replica log: source-log records (via [processRecords]),
-    // external-source txs (via [indexTx]), and the trie-GC `TriesDeleted` publishes (via
-    // [trieGc]'s commit callback). The transactional Kafka producer is not safe for concurrent
-    // `withTx`, so every path holds this lock before touching it.
-    private val mutex = Mutex()
+    private sealed interface PersisterTask {
+        val onComplete: CompletableDeferred<Unit>
+
+        // `srcMsgId`: source-log msgId for source-log Tx, null for ext-source.
+        data class ResolvedTx(
+            val resolvedTx: ReplicaMessage.ResolvedTx,
+            val srcMsgId: MessageId?,
+        ) : PersisterTask {
+            override val onComplete = CompletableDeferred<Unit>()
+        }
+
+        data class SourceLogRecord(val record: Log.Record<SourceMessage>) : PersisterTask {
+            override val onComplete = CompletableDeferred<Unit>()
+        }
+
+        data class TriesDeleted(val tableName: TableRef, val trieKeys: Set<TrieKey>) : PersisterTask {
+            override val onComplete = CompletableDeferred<Unit>()
+        }
+    }
+
+    private val persisterCh = Channel<PersisterTask>(RENDEZVOUS, onUndeliveredElement = { it.onComplete.cancel() })
+
+    private val scope = CoroutineScope(ctx)
+
+    private suspend fun handleSourceLogRecord(task: PersisterTask.SourceLogRecord) {
+        val record = task.record
+        val msgId = record.msgId
+
+        when (val msg = record.message) {
+            is SourceMessage.Tx, is SourceMessage.LegacyTx -> error("send ResolvedTx instead")
+
+            is SourceMessage.FlushBlock -> {
+                val expectedBlockIdx = msg.expectedBlockIdx
+                if (expectedBlockIdx != null && expectedBlockIdx == (blockCatalog.currentBlockIndex ?: -1L)) {
+                    finishBlock(msgId, watchers.externalSourceToken)
+                }
+                latestSourceMsgId = msgId
+                watchers.notifyMsg(msgId)
+            }
+
+            is SourceMessage.AttachDatabase -> {
+                val txKey = TransactionKey(msgId, record.logTimestamp)
+                val error = if (dbCatalog != null) {
+                    try {
+                        dbCatalog.attach(msg.dbName, msg.config)
+                        null
+                    } catch (e: Anomaly.Caller) {
+                        LOG.debug(e) { "[$dbName] leader: attach database '${msg.dbName}' failed at $msgId" }
+                        e
+                    }
+                } else null
+
+                val resolvedTx = indexer.addTxRow(txKey, error)
+                    .let { if (error == null) it.copy(dbOp = DbOp.Attach(msg.dbName, msg.config)) else it }
+
+                appendToReplica(resolvedTx)
+                liveIndex.importTx(resolvedTx)
+
+                val result = if (error == null) Committed(txKey) else Aborted(txKey, error)
+                latestSourceMsgId = msgId
+                watchers.notifyTx(result, msgId, null)
+            }
+
+            is SourceMessage.DetachDatabase -> {
+                val txKey = TransactionKey(msgId, record.logTimestamp)
+                val error = if (dbCatalog != null) {
+                    try {
+                        dbCatalog.detach(msg.dbName)
+                        null
+                    } catch (e: Anomaly.Caller) {
+                        LOG.debug(e) { "[$dbName] leader: detach database '${msg.dbName}' failed at $msgId" }
+                        e
+                    }
+                } else null
+
+                val resolvedTx = indexer.addTxRow(txKey, error)
+                    .let { if (error == null) it.copy(dbOp = DbOp.Detach(msg.dbName)) else it }
+
+                appendToReplica(resolvedTx)
+                liveIndex.importTx(resolvedTx)
+
+                val result = if (error == null) Committed(txKey) else Aborted(txKey, error)
+                latestSourceMsgId = msgId
+                watchers.notifyTx(result, msgId, null)
+            }
+
+            is SourceMessage.TriesAdded -> {
+                if (msg.storageVersion == Storage.VERSION && msg.storageEpoch == bufferPool.epoch) {
+                    msg.tries.groupBy { it.tableName }.forEach { (tableName, tries) ->
+                        trieCatalog.addTries(TableRef.parse(dbState.name, tableName), tries, record.logTimestamp)
+                    }
+                }
+
+                appendToReplica(TriesAdded(msg.storageVersion, msg.storageEpoch, msg.tries, sourceMsgId = msgId))
+
+                latestSourceMsgId = msgId
+                watchers.notifyMsg(msgId)
+            }
+
+            // TODO this one's going after 2.2
+            is SourceMessage.BlockUploaded -> {
+                latestSourceMsgId = msgId
+                watchers.notifyMsg(msgId)
+            }
+        }
+    }
+
+    private suspend fun handleResolvedTx(task: PersisterTask.ResolvedTx) {
+        val resolvedTx = task.resolvedTx
+        val txKey = TransactionKey(resolvedTx.txId, resolvedTx.systemTime)
+        val txResult = if (resolvedTx.committed) Committed(txKey) else Aborted(txKey, resolvedTx.error)
+
+        appendToReplica(resolvedTx)
+        liveIndex.importTx(resolvedTx)
+
+        // Ext-source (`srcMsgId == null`) tracks its progress via `externalSourceToken`, not
+        // `latestSourceMsgId` — so it doesn't bump.
+        val srcMsgId = task.srcMsgId?.also { latestSourceMsgId = it } ?: latestSourceMsgId
+        watchers.notifyTx(txResult, srcMsgId, resolvedTx.externalSourceToken)
+
+        if (liveIndex.isFull())
+            finishBlock(srcMsgId, resolvedTx.externalSourceToken)
+    }
+
+    private suspend fun handleTriesDeleted(task: PersisterTask.TriesDeleted) {
+        appendToReplica(ReplicaMessage.TriesDeleted(task.tableName.schemaAndTable, task.trieKeys))
+        trieCatalog.deleteTries(task.tableName, task.trieKeys)
+    }
+
+    private val persisterJob: Job = scope.launch {
+        try {
+            for (task in persisterCh) {
+                try {
+                    when (task) {
+                        is PersisterTask.SourceLogRecord -> handleSourceLogRecord(task)
+                        is PersisterTask.ResolvedTx -> handleResolvedTx(task)
+                        is PersisterTask.TriesDeleted -> handleTriesDeleted(task)
+                    }
+                    task.onComplete.complete(Unit)
+                } catch (e: CancellationException) {
+                    task.onComplete.cancel(e)
+                    throw e
+                } catch (e: InterruptedException) {
+                    task.onComplete.completeExceptionally(e)
+                    throw e
+                } catch (e: Interrupted) {
+                    task.onComplete.completeExceptionally(e)
+                    throw e
+                } catch (e: Throwable) {
+                    watchers.notifyError(e)
+                    task.onComplete.completeExceptionally(e)
+                    throw e
+                }
+            }
+        } catch (_: Throwable) {
+        } finally {
+            persisterCh.close()
+        }
+    }
+
+    private suspend fun submit(task: PersisterTask) {
+        persisterCh.send(task)
+        task.onComplete.await()
+    }
 
     internal val trieGc = nodeBase.config.garbageCollector.let { cfg ->
+        // The replica-log append and the local catalog mutation are one atom — both run inside
+        // a single Persister task. If they were split, this interleaving would corrupt
+        // persistent state:
+        //
+        //   1. Trie GC submits `TriesDeleted(G)` at replica position N, then (separately)
+        //      submits the catalog mutation.
+        //   2. Between the two, another Persister task — say an ext-source `commit` whose
+        //      `liveIndex.isFull()` — runs `finishBlock`, which uploads table-block files
+        //      snapshotting the current catalog. The catalog still has G in it (Trie GC's
+        //      mutation hasn't happened yet), so the table-block file at replica position
+        //      M > N records "catalog includes G" — even though the replica log already has
+        //      `TriesDeleted` for G at N.
+        //   3. Trie GC's catalog mutation finally runs and removes G.
+        //
+        // The table-block file uploaded at (2) is now a persistent snapshot of state that
+        // disagrees with the replica log it claims to be a snapshot of.
+        val commitTriesDeleted: suspend (TableRef, Set<TrieKey>) -> Unit = { tableName, trieKeys ->
+            submit(PersisterTask.TriesDeleted(tableName, trieKeys))
+        }
+
         TrieGarbageCollector(
             bufferPool, dbState,
-            // The replica-log append and the local catalog mutation are one atom under the
-            // replica-log mutex. If they were split, this interleaving would corrupt persistent
-            // state:
-            //
-            //   1. Trie GC takes the mutex, appends `TriesDeleted(G)` at replica position N,
-            //      releases the mutex.
-            //   2. Before Trie GC re-takes a (separate) lock to mutate the catalog, another
-            //      coroutine — say an ext-source `commit` whose `liveIndex.isFull()` — grabs
-            //      the mutex.
-            //   3. That coroutine runs `finishBlock`, which uploads table-block files snapshotting
-            //      the current catalog. The catalog still has G in it (Trie GC's mutation hasn't
-            //      happened yet), so the table-block file at replica position M > N records
-            //      "catalog includes G" — even though the replica log already has `TriesDeleted`
-            //      for G at N.
-            //   4. Trie GC finally mutates the catalog and removes G.
-            //
-            // The table-block file uploaded at (3) is now a persistent snapshot of state that
-            // disagrees with the replica log it claims to be a snapshot of.
-            commitTriesDeleted = { tableName, trieKeys ->
-                mutex.withLock {
-                    appendToReplica(ReplicaMessage.TriesDeleted(tableName.schemaAndTable, trieKeys))
-                    trieCatalog.deleteTries(tableName, trieKeys)
-                }
-            },
-            blocksToKeep = cfg.blocksToKeep,
-            garbageLifetime = cfg.garbageLifetime,
-            enabled = cfg.enabled,
-            meterRegistry = nodeBase.meterRegistry,
-            dbName = dbName
+            commitTriesDeleted, cfg.blocksToKeep, cfg.garbageLifetime,
+            cfg.enabled,
+            nodeBase.meterRegistry
         )
     }
 
-    private val txErrorCounter: Counter? =
-        nodeBase.meterRegistry?.let { Counter.builder("tx.error").register(it) }
+    private val txErrorCounter: Counter? = nodeBase.meterRegistry?.let { Counter.builder("tx.error").register(it) }
 
     private val extJob = extSource?.let { source ->
-        CoroutineScope(ctx).launch {
+        scope.launch {
             try {
                 source.onPartitionAssigned(partition, afterToken, this@LeaderLogProcessor)
             } catch (e: CancellationException) {
@@ -181,6 +319,25 @@ class LeaderLogProcessor(
         OpenTx(allocator, nodeBase, dbStorage, dbState, txKey, externalSourceToken, tracer)
 
     override fun startTx(txKey: TransactionKey): OpenTx = openTx(txKey, null)
+
+    private suspend fun commit(openTx: OpenTx, result: TxResult) {
+        val txKey = openTx.txKey
+        val externalSourceToken = openTx.externalSourceToken
+        val tableData = openTx.serializeTableData()
+
+        val resolvedTx = ReplicaMessage.ResolvedTx(
+            txKey.txId, txKey.systemTime,
+            committed = when (result) {
+                is TxResult.Committed -> true
+                is TxResult.Aborted -> false
+            },
+            error = (result as? TxResult.Aborted)?.error,
+            tableData, dbOp = null,
+            externalSourceToken = externalSourceToken,
+        )
+
+        submit(PersisterTask.ResolvedTx(resolvedTx, srcMsgId = null))
+    }
 
     override suspend fun indexTx(
         externalSourceToken: ExternalSourceToken?,
@@ -249,10 +406,9 @@ class LeaderLogProcessor(
         latestReplicaMsgId = blockUploader.uploadBlock(replicaProducer, boundaryMsgId, boundaryMsg)
         pendingBlock = null
 
-        // Fire-and-forget: a non-suspending [signal] just enqueues a cycle on the GC's own
-        // coroutine. We can call this from inside the replica-log mutex without deadlock — the
-        // GC's `commitTriesDeleted` callback only takes the mutex when its loop actually runs,
-        // by which time we've long released it. Tx processing carries on without waiting for GC.
+        // Safe to call from inside a Persister task: signal() just enqueues a cycle on the GC's
+        // own coroutine; its `commitTriesDeleted` callback submits a fresh task that won't run
+        // until this one returns.
         blockGc.signal()
         trieGc.signal()
     }
@@ -322,174 +478,21 @@ class LeaderLogProcessor(
         }
     }
 
-    private fun notifyTx(resolvedTx: ReplicaMessage.ResolvedTx) {
-        val txKey = TransactionKey(resolvedTx.txId, resolvedTx.systemTime)
-
-        val result =
-            if (resolvedTx.committed) TransactionResult.Committed(txKey)
-            else TransactionResult.Aborted(txKey, resolvedTx.error)
-
-        watchers.notifyTx(result, resolvedTx.txId, resolvedTx.externalSourceToken)
-    }
-
-    private suspend fun handleResolvedTx(resolvedTx: ReplicaMessage.ResolvedTx) {
-        val txId = resolvedTx.txId
-
-        appendToReplica(resolvedTx)
-        latestSourceMsgId = txId
-        notifyTx(resolvedTx)
-
-        if (liveIndex.isFull())
-            finishBlock(txId, resolvedTx.externalSourceToken)
-    }
-
-    private suspend fun commit(openTx: OpenTx, result: TxResult) {
-        val txKey = openTx.txKey
-        val externalSourceToken = openTx.externalSourceToken
-        val tableData = openTx.serializeTableData()
-
-        mutex.withLock {
-            liveIndex.commitTx(openTx)
-
-            val resolvedTx = ReplicaMessage.ResolvedTx(
-                txKey.txId, txKey.systemTime,
-                committed = when (result) {
-                    is TxResult.Committed -> true
-                    is TxResult.Aborted -> false
-                },
-                error = (result as? TxResult.Aborted)?.error,
-                tableData, dbOp = null,
-                externalSourceToken = externalSourceToken,
-            )
-
-            appendToReplica(resolvedTx)
-
-            val txResult = when (result) {
-                is TxResult.Committed -> TransactionResult.Committed(txKey)
-                is TxResult.Aborted -> TransactionResult.Aborted(txKey, result.error)
-            }
-            watchers.notifyTx(txResult, latestSourceMsgId, resolvedTx.externalSourceToken)
-
-            if (liveIndex.isFull())
-                finishBlock(latestSourceMsgId, resolvedTx.externalSourceToken)
-        }
-    }
-
     override suspend fun processRecords(records: List<Log.Record<SourceMessage>>) {
         maybeFlushBlock()
 
         for (record in records) {
-            mutex.withLock {
-                val msgId = record.msgId
-                LOG.trace { "[$dbName] leader: message $msgId (${record.message::class.simpleName})" }
+            val msgId = record.msgId
+            LOG.trace { "[$dbName] leader: message $msgId (${record.message::class.simpleName})" }
 
-                try {
-                    when (val msg = record.message) {
-                        is SourceMessage.Tx -> {
-                            val resolved = resolveTx(msgId, record, msg)
-                            handleResolvedTx(msg.externalSourceToken?.let { resolved.copy(externalSourceToken = it) }
-                                ?: resolved)
-                        }
+            val persisterTask = when (val msg = record.message) {
+                is SourceMessage.Tx, is SourceMessage.LegacyTx ->
+                    PersisterTask.ResolvedTx(resolveTx(msgId, record, msg), msgId)
 
-                        is SourceMessage.LegacyTx -> handleResolvedTx(resolveTx(msgId, record, msg))
-
-                        is SourceMessage.FlushBlock -> {
-                            val expectedBlockIdx = msg.expectedBlockIdx
-                            if (expectedBlockIdx != null && expectedBlockIdx == (blockCatalog.currentBlockIndex ?: -1L)) {
-                                finishBlock(msgId, watchers.externalSourceToken)
-                            }
-                            latestSourceMsgId = msgId
-                            watchers.notifyMsg(msgId)
-                        }
-
-                        is SourceMessage.AttachDatabase -> {
-                            val txKey = TransactionKey(msgId, record.logTimestamp)
-                            val error = if (dbCatalog != null) {
-                                try {
-                                    dbCatalog.attach(msg.dbName, msg.config)
-                                    null
-                                } catch (e: Anomaly.Caller) {
-                                    LOG.debug(e) { "[$dbName] leader: attach database '${msg.dbName}' failed at $msgId" }
-                                    e
-                                }
-                            } else null
-
-                            val resolvedTx = indexer.addTxRow(txKey, error)
-                                .let { if (error == null) it.copy(dbOp = DbOp.Attach(msg.dbName, msg.config)) else it }
-
-                            appendToReplica(resolvedTx)
-
-                            val result =
-                                if (error == null) TransactionResult.Committed(txKey)
-                                else TransactionResult.Aborted(txKey, error)
-                            latestSourceMsgId = msgId
-                            watchers.notifyTx(result, msgId, null)
-                        }
-
-                        is SourceMessage.DetachDatabase -> {
-                            val txKey = TransactionKey(msgId, record.logTimestamp)
-                            val error = if (dbCatalog != null) {
-                                try {
-                                    dbCatalog.detach(msg.dbName)
-                                    null
-                                } catch (e: Anomaly.Caller) {
-                                    LOG.debug(e) { "[$dbName] leader: detach database '${msg.dbName}' failed at $msgId" }
-                                    e
-                                }
-                            } else null
-
-                            val resolvedTx = indexer.addTxRow(txKey, error)
-                                .let { if (error == null) it.copy(dbOp = DbOp.Detach(msg.dbName)) else it }
-
-                            appendToReplica(resolvedTx)
-
-                            val result = if (error == null) TransactionResult.Committed(txKey)
-                            else TransactionResult.Aborted(txKey, error)
-                            latestSourceMsgId = msgId
-                            watchers.notifyTx(result, msgId, null)
-                        }
-
-                        is SourceMessage.TriesAdded -> {
-                            if (msg.storageVersion == Storage.VERSION && msg.storageEpoch == bufferPool.epoch) {
-                                msg.tries.groupBy { it.tableName }.forEach { (tableName, tries) ->
-                                    trieCatalog.addTries(
-                                        TableRef.parse(dbState.name, tableName),
-                                        tries,
-                                        record.logTimestamp
-                                    )
-                                }
-                            }
-
-                            appendToReplica(
-                                TriesAdded(
-                                    msg.storageVersion, msg.storageEpoch, msg.tries,
-                                    sourceMsgId = msgId
-                                )
-                            )
-
-                            latestSourceMsgId = msgId
-                            watchers.notifyMsg(msgId)
-                        }
-
-                        // TODO this one's going before release
-                        is SourceMessage.BlockUploaded -> {
-                            latestSourceMsgId = msgId
-                            watchers.notifyMsg(msgId)
-                        }
-                    }
-                } catch (e: InterruptedException) {
-                    throw e
-                } catch (e: Interrupted) {
-                    throw e
-                } catch (e: Throwable) {
-                    LOG.error(
-                        e,
-                        "[$dbName] leader: failed to process log record with msgId $msgId (${record.message::class.simpleName})"
-                    )
-                    watchers.notifyError(e)
-                    throw e
-                }
+                else -> PersisterTask.SourceLogRecord(record)
             }
+
+            submit(persisterTask)
         }
     }
 
@@ -499,6 +502,10 @@ class LeaderLogProcessor(
         extSource?.close()
         blockGc.close()
         trieGc.close()
+        // `persisterJob.cancel()` only — `CoroutineScope(ctx)` may share ctx's Job (e.g. under
+        // runTest), so `scope.cancel()` would tear down the surrounding scope.
+        persisterJob.cancel()
+        persisterCh.close()
         indexer.close()
         allocator.close()
     }

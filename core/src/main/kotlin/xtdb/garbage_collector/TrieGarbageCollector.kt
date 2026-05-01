@@ -10,7 +10,6 @@ import kotlinx.coroutines.selects.select
 import xtdb.catalog.BlockCatalog.Companion.blockFromLatest
 import xtdb.database.DatabaseState
 import xtdb.storage.BufferPool
-import xtdb.table.DatabaseName
 import xtdb.table.TableRef
 import xtdb.time.microsAsInstant
 import xtdb.trie.Trie
@@ -63,13 +62,11 @@ class TrieGarbageCollector(
     private val commitTriesDeleted: suspend (tableName: TableRef, trieKeys: Set<TrieKey>) -> Unit,
     private val blocksToKeep: Int,
     private val garbageLifetime: Duration,
-    /** Gates [signal]s from the leader's block-boundary path; direct [awaitNoGarbage] is unaffected. */
     val enabled: Boolean,
     private val meterRegistry: MeterRegistry? = null,
     tableParallelism: Int = DEFAULT_TABLE_PARALLELISM,
     deleteParallelism: Int = DEFAULT_DELETE_PARALLELISM,
     dispatcher: CoroutineDispatcher = Dispatchers.IO,
-    dbName: DatabaseName,
 ) : AutoCloseable {
 
     private val blockCatalog = dbState.blockCatalog
@@ -88,7 +85,7 @@ class TrieGarbageCollector(
     private val deleteTimer: Timer? = meterRegistry?.let {
         Timer.builder("xtdb.gc.tries.delete.timer")
             .publishPercentiles(0.75, 0.95, 0.99)
-            .tag("db", dbName)
+            .tag("db", dbState.name)
             .register(it)
     }
     

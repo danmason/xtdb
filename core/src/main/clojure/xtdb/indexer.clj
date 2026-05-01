@@ -247,10 +247,9 @@
   (Indexer/addTxRow open-tx db-name tx-key t user-metadata))
 
 
-(defn- commit [^LiveIndex live-index ^OpenTx open-tx committed? error]
+(defn- commit [^OpenTx open-tx committed? error]
   (let [table-data (.serializeTableData open-tx)
         ^TransactionKey tx-key (.getTxKey open-tx)]
-    (.commitTx live-index open-tx)
     (ReplicaMessage$ResolvedTx. (.getTxId tx-key)
                                 (.getSystemTime tx-key)
                                 (boolean committed?)
@@ -292,7 +291,7 @@
               (when tx-error-counter
                 (.increment tx-error-counter))
               (add-tx-row! db-name open-tx tx-key err user-metadata)
-              (commit live-index open-tx false err)))
+              (commit open-tx false err)))
 
           (let [system-time (or system-time default-system-time)
                 tx-key (serde/->TxKey msg-id system-time)]
@@ -301,7 +300,7 @@
                 (do
                                     (util/with-open [open-tx (.startTx tx-indexer tx-key)]
                     (add-tx-row! db-name open-tx tx-key skipped-exn user-metadata)
-                    (commit live-index open-tx false skipped-exn)))
+                    (commit open-tx false skipped-exn)))
 
                 (let [tx-opts {:snapshot-token (basis/->time-basis-str {db-name [system-time]})
                                :current-time system-time
@@ -347,16 +346,16 @@
                         (when tx-error-counter
                           (.increment tx-error-counter))
                         (add-tx-row! db-name open-tx tx-key e user-metadata)
-                        (commit live-index open-tx false e)))
+                        (commit open-tx false e)))
 
                     (do
                       (add-tx-row! db-name open-tx tx-key nil user-metadata)
-                      (commit live-index open-tx true nil)))))))))))
+                      (commit open-tx true nil)))))))))))
 
   (addTxRow [_ tx-key e]
     (util/with-open [open-tx (.startTx tx-indexer tx-key)]
       (add-tx-row! db-name open-tx tx-key e {})
-      (commit live-index open-tx (nil? e) e))))
+      (commit open-tx (nil? e) e))))
 
 (defn ->factory ^xtdb.indexer.Indexer$Factory []
   (reify Indexer$Factory
