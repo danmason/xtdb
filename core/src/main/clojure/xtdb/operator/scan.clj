@@ -311,7 +311,8 @@
                            (util/with-close-on-catch [!segments (LinkedList.)]
 
                              (let [filter-opts {:query-bounds temporal-bounds
-                                                :projects-temporal-cols? (boolean (some #{"_valid_from" "_valid_to" "_system_from" "_system_to"} col-names))}]
+                                                :projects-temporal-cols? (boolean (some #{"_valid_from" "_valid_to" "_system_from" "_system_to"} col-names))
+                                                :clamp-valid-time? (boolean (:clamp-valid-time? scan-opts))}]
 
                                (doseq [{:keys [^String trie-key]} (-> (cat/trie-state trie-catalog table)
                                                                       (cat/current-tries)

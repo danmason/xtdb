@@ -173,7 +173,25 @@
                                 ["l0-current-block-01" nil [20190101 20250101 20200101]]
                                 ["l0-current-block-02" nil [20220101 Long/MAX_VALUE 20190101]]]
                                opts))
-              "recency doesn't filter, temporal metadata does filter, if valid-time bounding files come earlier in system time they don't need to get taken")))))
+              "recency doesn't filter, temporal metadata does filter, if valid-time bounding files come earlier in system time they don't need to get taken")))
+
+    (t/testing ":clamp-valid-time? drops constrain-only tries"
+      ;; Block 01 emits (vt 20200101 → 20250101, extending beyond the query);
+      ;; Block 02 is constrain-only — vt 20220101 → 20240101 sits inside Block 01's
+      ;; envelope but is disjoint from the query 20200101 → 20210101.
+      ;; Under clamp, Block 02's only contribution would be a `_valid_to` push-out
+      ;; that the projection clamps back inside the query, so reading it is wasted I/O.
+      (let [tries [["l0-current-block-01" nil [20200101 20250101]]
+                   ["l0-current-block-02" nil [20220101 20240101]]]
+            base-opts {:query-bounds (tu/->temporal-bounds 20200101 20210101)}]
+
+        (t/is (= #{"l0-current-block-01" "l0-current-block-02"}
+                 (filter-tries tries (assoc base-opts :projects-temporal-cols? true)))
+              "constrain-only kept when the query projects unclamped temporal cols")
+
+        (t/is (= #{"l0-current-block-01"}
+                 (filter-tries tries (assoc base-opts :projects-temporal-cols? true :clamp-valid-time? true)))
+              "constrain-only dropped under clamp, even though temporal cols are projected")))))
 
 (t/deftest test-partitions
   (t/is (= #{{:level 1,

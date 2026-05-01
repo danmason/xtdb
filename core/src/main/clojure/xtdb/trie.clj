@@ -104,7 +104,7 @@
         (.setPageLimit page-limit))
       (.build)))
 
-(defn filter-pages [pages {:keys [^TemporalBounds query-bounds projects-temporal-cols?]}]
+(defn filter-pages [pages {:keys [^TemporalBounds query-bounds projects-temporal-cols? clamp-valid-time?]}]
   ;; Pages are categorised by what they can do to the result:
   ;;
   ;; - **emit** — rows in this page can appear in the output.
@@ -113,7 +113,8 @@
   ;;   Temporal bounds match the query; content predicate need not.
   ;; - **constrain** — rows here can affect the bounds of the resulting polygons.
   ;;   Temporal bounds disjoint from the query but overlapping the emit envelope.
-  ;;   We exclude these if the query doesn't project temporal columns
+  ;;   We exclude these if the caller doesn't observe their contribution: either the query doesn't
+  ;;   project temporal columns, or it projects them clamped to the query bounds.
 
   (let [leaves (ArrayList.)
         min-query-recency (long (min (.getLower (.getValidTime query-bounds))
@@ -156,7 +157,7 @@
                             ;; none of the rows in that file can affect the rows in the emit set.
                             (<= smallest-system-from (.getMaxSystemFrom tm))
 
-                            (if projects-temporal-cols?
+                            (if (and projects-temporal-cols? (not clamp-valid-time?))
                               ;; keep candidates whose vt overlaps the emit envelope
                               ;; (covers both supersede and constrain — the latter feed `_valid_from` etc.).
                               (and (.intersects (TemporalDimension. (.getMinValidFrom tm) (.getMaxValidTo tm))
@@ -165,7 +166,8 @@
                                        (>= page-recency smallest-system-from)))
 
                               ;; keep only candidates that vt-intersect the query itself
-                              ;; (supersede only; constrain-only contribution is wasted I/O)
+                              ;; (supersede only; constrain-only contribution is wasted I/O —
+                              ;; either nobody reads vt cols, or their contribution would be clamped away)
                               (temporal-intersects? page)))]
 
               (.add leaves page)))
