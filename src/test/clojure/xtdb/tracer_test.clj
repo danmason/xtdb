@@ -190,9 +190,6 @@
                           [{:name "query.cursor.project"
                             :attributes {"cursor.page_count" "0" "cursor.row_count" "0" "cursor.type" "project"},
                             :children []}
-                           {:name "query.cursor.project"
-                            :attributes {"cursor.page_count" "0" "cursor.row_count" "0" "cursor.type" "project"},
-                            :children []}
                            {:name "query.cursor.rename"
                             :attributes {"cursor.page_count" "0" "cursor.row_count" "0" "cursor.type" "rename"},
                             :children []}

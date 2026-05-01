@@ -32,4 +32,5 @@
     {:table #xt/table foo,
      :columns
      [_valid_to bar baz _system_time _valid_from _valid_time _iid],
+     :clamp-valid-time? true,
      :for-valid-time :all-time}]]]]

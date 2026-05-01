@@ -2923,23 +2923,18 @@
   (plan-rel [{{:keys [default-db]} :env}]
     [:rename {:prefix unique-table-alias}
      [:scan (cond-> {:table (table/->ref default-db (symbol table-name))
-                     :columns (vec (.keySet !reqd-cols))}
+                     :columns (vec (.keySet !reqd-cols))
+                     :clamp-valid-time? true}
               for-valid-time (assoc :for-valid-time for-valid-time))]]))
 
 (def ^:private vf-col (->col-sym "_valid_from"))
 (def ^:private vt-col (->col-sym "_valid_to"))
 
 (defn- dml-stmt-valid-time-portion [from-expr to-expr]
+  ;; The DML scan sets `:clamp-valid-time? true` so `_valid_from` / `_valid_to` arrive
+  ;; clamped to `[from-expr, to-expr)` — no post-scan clamp needed.
   {:for-valid-time [:in (or from-expr time/start-of-time) to-expr]
-   :projection [{vf-col (xt/template
-                         (greatest ~vf-col (cast (coalesce ~from-expr xtdb/start-of-time) #xt/type :instant)))}
-
-                {vt-col (if to-expr
-                          (xt/template
-                           (least (coalesce ~vt-col xtdb/end-of-time)
-                                  (coalesce (cast ~to-expr #xt/type :instant) xtdb/end-of-time)))
-
-                          vt-col)}]})
+   :projection [vf-col vt-col]})
 
 (defrecord DmlValidTimeExtentsVisitor [env scope]
   SqlVisitor
@@ -3027,6 +3022,7 @@
           [:order-by {:order-specs [[_iid] [_valid_from]]}
            [:scan {:table ~table
                    :for-valid-time [:in ~valid-from ~valid-to]
+                   :clamp-valid-time? true
                    :columns [_iid _valid_from _valid_to
                              ~@known-cols]}]]]]]]])))
 

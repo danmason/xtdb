@@ -13,4 +13,5 @@
      _valid_from
      {first_name (or (not (boolean (=== "Sue" first_name))))}
      _iid],
+    :clamp-valid-time? true,
     :for-valid-time :all-time}]]]
