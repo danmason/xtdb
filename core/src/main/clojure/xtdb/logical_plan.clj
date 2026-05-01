@@ -83,6 +83,7 @@
 
 (s/def ::for-valid-time (s/nilable ::temporal-filter))
 (s/def ::for-system-time (s/nilable ::temporal-filter))
+(s/def ::clamp-valid-time? (s/nilable boolean?))
 
 (defmulti ra-expr
   (fn [expr]

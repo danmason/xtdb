@@ -44,7 +44,7 @@
 (defmethod lp/ra-expr :scan [_]
   (s/cat :op #{:scan}
          :opts (s/keys :req-un [::table ::columns]
-                       :opt-un [::lp/for-valid-time ::lp/for-system-time])))
+                       :opt-un [::lp/for-valid-time ::lp/for-system-time ::lp/clamp-valid-time?])))
 
 (definterface IScanEmitter
   (emitScan [^xtdb.query.IQuerySource$QueryCatalog db-cat scan-expr scan-vec-types param-types]))
@@ -324,7 +324,7 @@
 
                                (let [merge-tasks (MergePlanner/planSync !segments (->path-pred iid-set) #(trie/filter-pages % filter-opts))]
                                (cond-> (ScanCursor. allocator (vec col-names) col-preds
-                                                    temporal-bounds
+                                                    temporal-bounds (boolean (:clamp-valid-time? scan-opts))
                                                     !segments (.iterator ^Iterable merge-tasks)
                                                     schema args)
                                  (or explain-analyze? (and tracer query-span)) (ICursor/wrapTracing tracer

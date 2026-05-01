@@ -262,10 +262,16 @@
 (defrecord TableTimePeriodSpecificationVisitor [expr-visitor]
   SqlVisitor
   (visitQueryValidTimePeriodSpecification [this ctx]
-    (if (.ALL ctx)
-      :all-time
-      (-> (.tableTimePeriodSpecification ctx)
-          (.accept this))))
+    (cond
+      (.ALL ctx) {:for-valid-time :all-time}
+
+      (.ONLY ctx) {:for-valid-time [:in
+                                    (-> ctx (.from) (.accept expr-visitor))
+                                    (-> ctx (.to) (.accept expr-visitor))]
+                   :clamp-valid-time? true}
+
+      :else {:for-valid-time (-> (.tableTimePeriodSpecification ctx)
+                                 (.accept this))}))
 
   (visitQuerySystemTimePeriodSpecification [this ctx]
     (if (.ALL ctx)
@@ -310,7 +316,7 @@
    plan])
 
 (defrecord BaseTable [env, ^TableRef table-ref
-                      for-valid-time for-system-time
+                      for-valid-time clamp-valid-time? for-system-time
                       table-alias unique-table-alias cols
                       ^Map !reqd-cols]
   Scope
@@ -345,6 +351,7 @@
        (cond-> [:scan (cond-> {:table table-ref
                                :columns scan-cols}
                         for-vt (assoc :for-valid-time for-vt)
+                        clamp-valid-time? (assoc :clamp-valid-time? true)
                         for-st (assoc :for-system-time for-st))]
          (or valid-time-col? sys-time-col?) (wrap-temporal-periods scan-cols valid-time-col? sys-time-col?))])))
 
@@ -690,13 +697,15 @@
                         1 (.accept ^ParserRuleContext (first specs) (->TableTimePeriodSpecificationVisitor expr-visitor))
                         :else (add-err! env (->MultipleTimePeriodSpecifications))))]
 
-              ;; HACK we scan `xt.not_found` until a not-found table can be an error, #4467
-              (->BaseTable env (or table (table/->ref default-db "xt" "not_found"))
-                           (<-table-time-period-specification (.queryValidTimePeriodSpecification ctx))
-                           (<-table-time-period-specification (.querySystemTimePeriodSpecification ctx))
-                           table-alias unique-table-alias
-                           (->insertion-ordered-set (or cols table-cols))
-                           (HashMap.)))))))
+              (let [{:keys [for-valid-time clamp-valid-time?]}
+                    (<-table-time-period-specification (.queryValidTimePeriodSpecification ctx))]
+                ;; HACK we scan `xt.not_found` until a not-found table can be an error, #4467
+                (->BaseTable env (or table (table/->ref default-db "xt" "not_found"))
+                             for-valid-time clamp-valid-time?
+                             (<-table-time-period-specification (.querySystemTimePeriodSpecification ctx))
+                             table-alias unique-table-alias
+                             (->insertion-ordered-set (or cols table-cols))
+                             (HashMap.))))))))
 
   (visitJoinTable [this ctx]
     (let [l (-> (.tableReference ctx 0) (.accept this))

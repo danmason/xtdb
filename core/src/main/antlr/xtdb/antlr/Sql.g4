@@ -554,6 +554,7 @@ querySystemTimePeriodSpecification
 
 queryValidTimePeriodSpecification
    : 'FOR' 'VALID_TIME' tableTimePeriodSpecification
+   | 'FOR' 'VALID_TIME' ONLY 'FROM' from=expr 'TO' to=expr
    | 'FOR' ALL 'VALID_TIME'
    ;
 
