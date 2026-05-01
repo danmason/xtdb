@@ -171,6 +171,7 @@ interface Compactor : AutoCloseable {
             private val scope = CoroutineScope(dbJob + dispatcher)
 
             private val trieCatalog = dbState.trieCatalog
+            private val liveIndex = dbState.liveIndexOrNull
 
             val driver = driverFactory.create(allocator, dbStorage, dbState, watchers)
 
@@ -264,6 +265,12 @@ interface Compactor : AutoCloseable {
                 LOGGER.trace("compactAll: waiting for idle")
                 promise.await()
                 LOGGER.trace("compactAll: idle")
+
+                // Compaction lands `TriesAdded` on the trie-cat asynchronously, so the live-index's
+                // cached `sharedSnap` would otherwise stay frozen at the last commit/`nextBlock`.
+                // Callers waiting for `compactAll` are explicitly synchronising on the post-compaction
+                // catalog, so refresh the snap here rather than at every test/dev call-site.
+                liveIndex?.refreshSnap()
             }
 
             override fun close() {

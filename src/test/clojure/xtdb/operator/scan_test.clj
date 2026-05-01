@@ -678,13 +678,13 @@
                                 (assoc query-opts :current-time #xt/instant "2024-12-30T00:00:00Z"))))
 
           ;; two entries 2024 and 2025
-          (t/is (= [{:xt/id 1,
-                     :xt/valid-from #xt/zoned-date-time "2024-01-01T00:00Z[UTC]",
-                     :xt/valid-to #xt/zoned-date-time "2025-01-01T00:00Z[UTC]"}
-                    {:xt/id 1,
-                     :xt/valid-from #xt/zoned-date-time "2025-01-01T00:00Z[UTC]"}]
-                   (tu/query-ra '[:scan {:table #xt/table docs, :for-valid-time [:between #inst "2024" #inst "2026"], :columns [_id _valid_from _valid_to]}]
-                                query-opts)))
+          (t/is (= #{{:xt/id 1,
+                      :xt/valid-from #xt/zoned-date-time "2024-01-01T00:00Z[UTC]",
+                      :xt/valid-to #xt/zoned-date-time "2025-01-01T00:00Z[UTC]"}
+                     {:xt/id 1,
+                      :xt/valid-from #xt/zoned-date-time "2025-01-01T00:00Z[UTC]"}}
+                   (set (tu/query-ra '[:scan {:table #xt/table docs, :for-valid-time [:between #inst "2024" #inst "2026"], :columns [_id _valid_from _valid_to]}]
+                                     query-opts))))
 
 
           ;; newest entry, basis at 2025
