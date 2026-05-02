@@ -165,6 +165,7 @@ class LogProcessorSimTest : SimulationTestBase() {
                 skipTxs = emptySet(), dbCatalog = null,
                 partition = 0, afterSourceMsgId = afterSourceMsgId, afterReplicaMsgId = afterReplicaMsgId,
                 afterToken = null,
+                ctx = dispatcher
             )
             return object : LogProcessor.LeaderSystem {
                 override val proc get() = proc
