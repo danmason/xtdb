@@ -138,20 +138,6 @@ class BlobStorageTest : ObjectStoreTest() {
     }
 
     @Test
-    fun `connection string auth`() {
-        // Exercise the connectionString credential path against Azurite —
-        // previously this was a code path with no test coverage.
-        val factory = azureBlobStorage("devstoreaccount1", "test-container") {
-            connectionString(azuriteConnectionString())
-            prefix("conn-string-test".asPath)
-        }
-
-        factory.openObjectStore(Path("auth-test"), emptyMap()).use { objectStore ->
-            roundTrip(objectStore as BlobStorage, "conn-str-roundtrip", randomByteBuffer(64))
-        }
-    }
-
-    @Test
     fun `remote alias — connectionString`() {
         val remotes = mapOf<RemoteAlias, Remote>(
             "az" to AzureRemote(connectionString = azuriteConnectionString(), storageAccountKey = null),

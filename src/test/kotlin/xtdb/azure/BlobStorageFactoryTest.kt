@@ -28,7 +28,6 @@ class BlobStorageFactoryTest {
             storageAccountKey("test-key")
             userManagedIdentityClientId("test-client-id")
             storageAccountEndpoint("https://test.blob.core.windows.net")
-            connectionString("DefaultEndpointsProtocol=https;AccountName=test;AccountKey=test")
         }
 
         val restored = BlobStorage.Registration().fromProto(original.configProto)
@@ -47,12 +46,10 @@ class BlobStorageFactoryTest {
 
         val proto = original.configProto.unpack(xtdb.azure.proto.AzureBlobStorageConfig::class.java)
         assertEquals("az", proto.remote)
-        assertEquals("", proto.connectionString, "connectionString must not appear on alias path")
         assertEquals("", proto.storageAccountKey, "storageAccountKey must not appear on alias path")
 
         val restored = BlobStorage.Registration().fromProto(original.configProto)
         assertEquals("az", restored.remote)
-        assertNull(restored.connectionString)
         assertNull(restored.storageAccountKey)
     }
 
@@ -60,7 +57,7 @@ class BlobStorageFactoryTest {
     fun `openObjectStore errors when both remote and inline creds set`() {
         val factory = azureBlobStorage("test-storage", "test-container") {
             remote("az")
-            connectionString("DefaultEndpointsProtocol=https;AccountName=test;AccountKey=test")
+            storageAccountKey("test")
         }
 
         val e = assertThrows<Incorrect> {

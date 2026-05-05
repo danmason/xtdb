@@ -11,6 +11,11 @@ message AzureBlobStorageConfig {
     string storage_account_key = 4;
     string user_managed_identity_client_id = 5;
     string storage_account_endpoint = 6;
-    string connection_string = 7;
+    // Field 7 previously held `connection_string`.
+    // This was broken in practice due to a bug and has been intentionally removed.
+    // We also do not allow connection strings in the Factory config, as this
+    // proto is serialized into logs — credentials must instead be provided
+    // via `remote` (node-local, non-serialized).
+    reserved 7;
     string remote = 8;
 }

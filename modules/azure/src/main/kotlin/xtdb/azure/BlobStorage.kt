@@ -338,7 +338,6 @@ class BlobStorage(
         var storageAccountKey: String? = null,
         var userManagedIdentityClientId: String? = null,
         var storageAccountEndpoint: String? = null,
-        var connectionString: String? = null,
         var remote: RemoteAlias? = null,
         @kotlinx.serialization.Transient var coroutineContext: CoroutineContext = Dispatchers.IO
     ) : ObjectStore.Factory {
@@ -354,40 +353,41 @@ class BlobStorage(
         @Suppress("unused")
         fun storageAccountEndpoint(endpoint: String) = apply { storageAccountEndpoint = endpoint }
 
-        fun connectionString(connectionString: String) = apply { this.connectionString = connectionString }
-
         @Suppress("unused")
         fun remote(alias: RemoteAlias) = apply { this.remote = alias }
 
         fun coroutineContext(coroutineContext: CoroutineContext) = apply { this.coroutineContext = coroutineContext }
 
         private fun resolveCredentials(remotes: Map<RemoteAlias, Remote>): Pair<String?, String?> {
-            val alias = remote ?: return connectionString to storageAccountKey
+            val alias = remote
 
-            if (connectionString != null || storageAccountKey != null)
-                throw Incorrect(
-                    "Azure BlobStorage factory has both 'remote' alias and inline connectionString/storageAccountKey — use one or the other",
-                    errorCode = "xtdb.azure/conflicting-config",
-                    data = mapOf("alias" to alias),
-                )
+            if (alias != null) {
+                if (storageAccountKey != null) {
+                    throw Incorrect(
+                        "Azure BlobStorage has both 'remote' and inline storageAccountKey — use only one",
+                        errorCode = "xtdb.azure/conflicting-config",
+                        data = mapOf("alias" to alias),
+                    )
+                }
 
-            val raw = remotes[alias]
-                ?: throw Incorrect(
-                    "no remote configured with alias '$alias' — add an '!Azure' entry under 'remotes:' in node config",
-                    errorCode = "xtdb.azure/missing-remote",
-                    data = mapOf("alias" to alias),
-                )
+                val raw = remotes[alias]
+                    ?: throw Incorrect(
+                        "no remote configured with alias '$alias'",
+                        errorCode = "xtdb.azure/missing-remote",
+                        data = mapOf("alias" to alias),
+                    )
 
-            val actualType = raw::class.simpleName ?: raw::class.qualifiedName ?: "unknown"
+                val az = raw as? AzureRemote
+                    ?: throw Incorrect(
+                        "remote '$alias' is not an !Azure remote",
+                        errorCode = "xtdb.azure/wrong-remote-type",
+                    )
 
-            val az = raw as? AzureRemote
-                ?: throw Incorrect(
-                    "remote '$alias' is a $actualType, expected an !Azure remote",
-                    errorCode = "xtdb.azure/wrong-remote-type",
-                    data = mapOf("alias" to alias, "actualType" to actualType),
-                )
+                return az.connectionString to az.storageAccountKey
+            }
 
-            return az.connectionString to az.storageAccountKey
+            // No connectionString fallback anymore
+            return null to storageAccountKey
         }
 
         override fun openObjectStore(storageRoot: Path, remotes: Map<RemoteAlias, Remote>): BlobStorage {
@@ -410,7 +410,6 @@ class BlobStorage(
                     this.remote = this@Factory.remote!!
                 } else {
                     this@Factory.storageAccountKey?.let { this.storageAccountKey = it }
-                    this@Factory.connectionString?.let { this.connectionString = it }
                 }
             }, "proto.xtdb.com")
         }
@@ -431,7 +430,6 @@ class BlobStorage(
                     storageAccountKey = config.storageAccountKey.takeIf { it.isNotEmpty() },
                     userManagedIdentityClientId = config.userManagedIdentityClientId.takeIf { it.isNotEmpty() },
                     storageAccountEndpoint = config.storageAccountEndpoint.takeIf { it.isNotEmpty() },
-                    connectionString = config.connectionString.takeIf { it.isNotEmpty() },
                     remote = config.remote.takeIf { it.isNotEmpty() },
                 )
             }
