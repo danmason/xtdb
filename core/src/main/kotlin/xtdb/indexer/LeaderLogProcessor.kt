@@ -4,6 +4,7 @@ import io.micrometer.core.instrument.Counter
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.Channel.Factory.RENDEZVOUS
+import kotlinx.coroutines.selects.selectUnbiased
 import org.apache.arrow.memory.BufferAllocator
 import xtdb.NodeBase
 import xtdb.api.TransactionKey
@@ -103,29 +104,43 @@ class LeaderLogProcessor(
 
     private sealed interface PersisterTask {
         val onComplete: CompletableDeferred<Unit>
+    }
 
-        // `srcMsgId`: source-log msgId for source-log Tx, null for ext-source.
+    private sealed interface SourceLogTask : PersisterTask {
+        data class Record(val record: Log.Record<SourceMessage>) : SourceLogTask {
+            override val onComplete = CompletableDeferred<Unit>()
+        }
+
         data class ResolvedTx(
             val resolvedTx: ReplicaMessage.ResolvedTx,
-            val srcMsgId: MessageId?,
-        ) : PersisterTask {
-            override val onComplete = CompletableDeferred<Unit>()
-        }
-
-        data class SourceLogRecord(val record: Log.Record<SourceMessage>) : PersisterTask {
-            override val onComplete = CompletableDeferred<Unit>()
-        }
-
-        data class TriesDeleted(val tableName: TableRef, val trieKeys: Set<TrieKey>) : PersisterTask {
+            val srcMsgId: MessageId,
+        ) : SourceLogTask {
             override val onComplete = CompletableDeferred<Unit>()
         }
     }
 
-    private val persisterCh = Channel<PersisterTask>(RENDEZVOUS, onUndeliveredElement = { it.onComplete.cancel() })
+    private sealed interface ExtSourceTask : PersisterTask {
+        data class ResolvedTx(val resolvedTx: ReplicaMessage.ResolvedTx) : ExtSourceTask {
+            override val onComplete = CompletableDeferred<Unit>()
+        }
+    }
+
+    private sealed interface GcTask : PersisterTask {
+        data class TriesDeleted(val tableName: TableRef, val trieKeys: Set<TrieKey>) : GcTask {
+            override val onComplete = CompletableDeferred<Unit>()
+        }
+    }
+
+    private val sourceLogCh =
+        Channel<SourceLogTask>(RENDEZVOUS, onUndeliveredElement = { it.onComplete.cancel() })
+    private val extSourceCh =
+        Channel<ExtSourceTask>(RENDEZVOUS, onUndeliveredElement = { it.onComplete.cancel() })
+    private val gcCh =
+        Channel<GcTask>(RENDEZVOUS, onUndeliveredElement = { it.onComplete.cancel() })
 
     private val scope = CoroutineScope(ctx)
 
-    private suspend fun handleSourceLogRecord(task: PersisterTask.SourceLogRecord) {
+    private suspend fun handleSourceLogRecord(task: SourceLogTask.Record) {
         val record = task.record
         val msgId = record.msgId
 
@@ -208,36 +223,44 @@ class LeaderLogProcessor(
         }
     }
 
-    private suspend fun handleResolvedTx(task: PersisterTask.ResolvedTx) {
-        val resolvedTx = task.resolvedTx
+    // Ext-source (`srcMsgId == null`) tracks its progress via `externalSourceToken`, not
+    // `latestSourceMsgId` — so it doesn't bump.
+    private suspend fun handleResolvedTx(resolvedTx: ReplicaMessage.ResolvedTx, srcMsgId: MessageId?) {
         val txKey = TransactionKey(resolvedTx.txId, resolvedTx.systemTime)
         val txResult = if (resolvedTx.committed) Committed(txKey) else Aborted(txKey, resolvedTx.error)
 
         appendToReplica(resolvedTx)
         liveIndex.importTx(resolvedTx)
 
-        // Ext-source (`srcMsgId == null`) tracks its progress via `externalSourceToken`, not
-        // `latestSourceMsgId` — so it doesn't bump.
-        val srcMsgId = task.srcMsgId?.also { latestSourceMsgId = it } ?: latestSourceMsgId
-        watchers.notifyTx(txResult, srcMsgId, resolvedTx.externalSourceToken)
+        val effectiveSrcMsgId = srcMsgId?.also { latestSourceMsgId = it } ?: latestSourceMsgId
+        watchers.notifyTx(txResult, effectiveSrcMsgId, resolvedTx.externalSourceToken)
 
         if (liveIndex.isFull())
-            finishBlock(srcMsgId, resolvedTx.externalSourceToken)
+            finishBlock(effectiveSrcMsgId, resolvedTx.externalSourceToken)
     }
 
-    private suspend fun handleTriesDeleted(task: PersisterTask.TriesDeleted) {
+    private suspend fun handleTriesDeleted(task: GcTask.TriesDeleted) {
         appendToReplica(ReplicaMessage.TriesDeleted(task.tableName.schemaAndTable, task.trieKeys))
         trieCatalog.deleteTries(task.tableName, task.trieKeys)
     }
 
+    // Unbiased select across the three sources so a slow producer on one channel can't starve
+    // the others. The three sources are: source-log records, external-source resolved txs, and
+    // GC trie deletions.
     private val persisterJob: Job = scope.launch {
         try {
-            for (task in persisterCh) {
+            while (true) {
+                val task: PersisterTask = selectUnbiased {
+                    sourceLogCh.onReceive { it }
+                    extSourceCh.onReceive { it }
+                    gcCh.onReceive { it }
+                }
                 try {
                     when (task) {
-                        is PersisterTask.SourceLogRecord -> handleSourceLogRecord(task)
-                        is PersisterTask.ResolvedTx -> handleResolvedTx(task)
-                        is PersisterTask.TriesDeleted -> handleTriesDeleted(task)
+                        is SourceLogTask.Record -> handleSourceLogRecord(task)
+                        is SourceLogTask.ResolvedTx -> handleResolvedTx(task.resolvedTx, task.srcMsgId)
+                        is ExtSourceTask.ResolvedTx -> handleResolvedTx(task.resolvedTx, srcMsgId = null)
+                        is GcTask.TriesDeleted -> handleTriesDeleted(task)
                     }
                     task.onComplete.complete(Unit)
                 } catch (e: CancellationException) {
@@ -257,12 +280,18 @@ class LeaderLogProcessor(
             }
         } catch (_: Throwable) {
         } finally {
-            persisterCh.close()
+            sourceLogCh.close()
+            extSourceCh.close()
+            gcCh.close()
         }
     }
 
     private suspend fun submit(task: PersisterTask) {
-        persisterCh.send(task)
+        when (task) {
+            is SourceLogTask -> sourceLogCh.send(task)
+            is ExtSourceTask -> extSourceCh.send(task)
+            is GcTask -> gcCh.send(task)
+        }
         task.onComplete.await()
     }
 
@@ -284,7 +313,7 @@ class LeaderLogProcessor(
         // The table-block file uploaded at (2) is now a persistent snapshot of state that
         // disagrees with the replica log it claims to be a snapshot of.
         val commitTriesDeleted: suspend (TableRef, Set<TrieKey>) -> Unit = { tableName, trieKeys ->
-            submit(PersisterTask.TriesDeleted(tableName, trieKeys))
+            submit(GcTask.TriesDeleted(tableName, trieKeys))
         }
 
         TrieGarbageCollector(
@@ -336,7 +365,7 @@ class LeaderLogProcessor(
             externalSourceToken = externalSourceToken,
         )
 
-        submit(PersisterTask.ResolvedTx(resolvedTx, srcMsgId = null))
+        submit(ExtSourceTask.ResolvedTx(resolvedTx))
     }
 
     override suspend fun indexTx(
@@ -487,9 +516,9 @@ class LeaderLogProcessor(
 
             val persisterTask = when (val msg = record.message) {
                 is SourceMessage.Tx, is SourceMessage.LegacyTx ->
-                    PersisterTask.ResolvedTx(resolveTx(msgId, record, msg), msgId)
+                    SourceLogTask.ResolvedTx(resolveTx(msgId, record, msg), msgId)
 
-                else -> PersisterTask.SourceLogRecord(record)
+                else -> SourceLogTask.Record(record)
             }
 
             submit(persisterTask)
@@ -505,7 +534,9 @@ class LeaderLogProcessor(
         // `persisterJob.cancel()` only — `CoroutineScope(ctx)` may share ctx's Job (e.g. under
         // runTest), so `scope.cancel()` would tear down the surrounding scope.
         persisterJob.cancel()
-        persisterCh.close()
+        sourceLogCh.close()
+        extSourceCh.close()
+        gcCh.close()
         indexer.close()
         allocator.close()
     }
