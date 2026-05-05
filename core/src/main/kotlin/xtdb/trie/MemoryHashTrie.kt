@@ -101,44 +101,12 @@ class MemoryHashTrie(
         override val hashChildren = null
 
         fun mergeSort(trie: MemoryHashTrie): IntArray {
-            if (log.isEmpty()) return data
-            return sortedData ?: mergeSort(trie, data, sortLog(trie, log, logCount), logCount)
+            if (logCount == 0) return data
+            return sortedData ?: mergeSort(trie, data, sortLog(trie, log, logCount))
         }
 
-        private fun mergeSort(trie: MemoryHashTrie, data: IntArray, log: IntArray, logCount: Int): IntArray {
-            val leftPtr = ArrowBufPointer()
-            val logPtr = ArrowBufPointer()
-            val dataCount = data.size
-
-            val res = IntArrayList(data.size + logCount)
-            var dataIdx = 0
-            var logIdx = 0
-
-            while (true) {
-                if (dataIdx == dataCount) {
-                    for (idx in logIdx..<logCount) res.add(log[idx])
-                    break
-                }
-
-                if (logIdx == logCount) {
-                    for (idx in dataIdx..<dataCount) res.add(data[idx])
-                    break
-                }
-
-                val dataKey = data[dataIdx]
-                val logKey = log[logIdx]
-
-                if (trie.compare(dataKey, logKey, leftPtr, logPtr) < 0) {
-                    res.add(dataKey)
-                    dataIdx++
-                } else {
-                    res.add(logKey)
-                    logIdx++
-                }
-            }
-
-            return res.toArray().also { sortedData = it }
-        }
+        private fun mergeSort(trie: MemoryHashTrie, data: IntArray, log: IntArray): IntArray =
+            merge(trie, data, log).also { sortedData = it }
 
         private fun sortLog(trie: MemoryHashTrie, log: IntArray, logCount: Int): IntArray {
             val leftPtr = ArrowBufPointer()
@@ -168,8 +136,7 @@ class MemoryHashTrie(
             val data = if (sortedData != null) sortedData as IntArray else mergeSort(
                 trie,
                 data,
-                sortLog(trie, log, logCount),
-                logCount
+                sortLog(trie, log, logCount)
             )
             val log = IntArray(trie.logLimit)
             val logCount = 0
@@ -228,6 +195,43 @@ class MemoryHashTrie(
             System.arraycopy(path, 0, childPath, 0, currentPathLength)
             childPath[currentPathLength] = idx
             return childPath
+        }
+
+        // Merges two sorted index arrays in IID order, ties broken by `compare`'s rightIdx-first rule.
+        private fun merge(trie: MemoryHashTrie, left: IntArray, right: IntArray): IntArray {
+            val leftPtr = ArrowBufPointer()
+            val rightPtr = ArrowBufPointer()
+            val leftCount = left.size
+            val rightCount = right.size
+
+            val res = IntArrayList(leftCount + rightCount)
+            var leftIdx = 0
+            var rightIdx = 0
+
+            while (true) {
+                if (leftIdx == leftCount) {
+                    for (idx in rightIdx..<rightCount) res.add(right[idx])
+                    break
+                }
+
+                if (rightIdx == rightCount) {
+                    for (idx in leftIdx..<leftCount) res.add(left[idx])
+                    break
+                }
+
+                val l = left[leftIdx]
+                val r = right[rightIdx]
+
+                if (trie.compare(l, r, leftPtr, rightPtr) < 0) {
+                    res.add(l)
+                    leftIdx++
+                } else {
+                    res.add(r)
+                    rightIdx++
+                }
+            }
+
+            return res.toArray()
         }
 
         private fun HashTrieNode.decode(logLimit: Int): Node? =
