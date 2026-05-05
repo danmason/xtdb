@@ -335,6 +335,10 @@ class BlobStorage(
         val storageAccount: String,
         val container: String,
         var prefix: Path? = null,
+        @Deprecated(
+            message = "Inline 'storageAccountKey' is deprecated - configure credentials via 'remote' instead",
+            level = DeprecationLevel.WARNING
+        )
         var storageAccountKey: String? = null,
         var userManagedIdentityClientId: String? = null,
         var storageAccountEndpoint: String? = null,
@@ -344,6 +348,11 @@ class BlobStorage(
 
         fun prefix(prefix: Path) = apply { this.prefix = prefix }
 
+        @Deprecated(
+            message = "Use remote(...) instead of inline credentials",
+            replaceWith = ReplaceWith("remote(alias)"),
+            level = DeprecationLevel.WARNING
+        )
         @Suppress("unused")
         fun storageAccountKey(storageAccountKey: String) = apply { this.storageAccountKey = storageAccountKey }
 
