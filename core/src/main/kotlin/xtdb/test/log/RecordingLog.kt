@@ -3,8 +3,9 @@ package xtdb.test.log
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
+import xtdb.api.Remote
+import xtdb.api.RemoteAlias
 import xtdb.api.log.Log
-import xtdb.api.log.LogClusterAlias
 import xtdb.api.log.MessageId
 import xtdb.api.log.SourceMessage
 import xtdb.api.log.ReplicaMessage
@@ -33,16 +34,16 @@ class RecordingLog<M>(private val instantSource: InstantSource, messages: List<M
         fun instantSource(instantSource: InstantSource) = apply { this.instantSource = instantSource }
         fun messages(messages: List<SourceMessage>) = apply { this.messages = messages }
 
-        override fun openSourceLog(clusters: Map<LogClusterAlias, Log.Cluster>) = RecordingLog(instantSource, messages)
+        override fun openSourceLog(remotes: Map<RemoteAlias, Remote>) = RecordingLog(instantSource, messages)
 
-        override fun openReadOnlySourceLog(clusters: Map<LogClusterAlias, Log.Cluster>) =
-            ReadOnlyLog(openSourceLog(clusters))
+        override fun openReadOnlySourceLog(remotes: Map<RemoteAlias, Remote>) =
+            ReadOnlyLog(openSourceLog(remotes))
 
-        override fun openReplicaLog(clusters: Map<LogClusterAlias, Log.Cluster>) =
+        override fun openReplicaLog(remotes: Map<RemoteAlias, Remote>) =
             RecordingLog<ReplicaMessage>(instantSource, emptyList())
 
-        override fun openReadOnlyReplicaLog(clusters: Map<LogClusterAlias, Log.Cluster>) =
-            ReadOnlyLog(openReplicaLog(clusters))
+        override fun openReadOnlyReplicaLog(remotes: Map<RemoteAlias, Remote>) =
+            ReadOnlyLog(openReplicaLog(remotes))
 
         override fun writeTo(dbConfig: DatabaseConfig.Builder) = Unit
     }

@@ -6,8 +6,6 @@ import kotlinx.serialization.modules.polymorphic
 import xtdb.indexer.TxIndexer
 import xtdb.api.Remote
 import xtdb.api.RemoteAlias
-import xtdb.api.log.Log
-import xtdb.api.log.LogClusterAlias
 import xtdb.database.proto.DatabaseConfig
 import java.util.*
 import com.google.protobuf.Any as ProtoAny
@@ -22,7 +20,6 @@ interface ExternalSource : AutoCloseable {
         fun writeTo(dbConfig: DatabaseConfig.Builder)
         fun open(
             dbName: String,
-            clusters: Map<LogClusterAlias, Log.Cluster>,
             remotes: Map<RemoteAlias, Remote>,
         ): ExternalSource
 

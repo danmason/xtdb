@@ -10,9 +10,8 @@ import xtdb.Tracer.openTracer
 import xtdb.api.Remote
 import xtdb.api.RemoteAlias
 import xtdb.api.Xtdb
-import xtdb.api.log.Log
-import xtdb.api.log.LogClusterAlias
 import xtdb.cache.DiskCache
+import xtdb.error.Incorrect
 import xtdb.cache.MemoryCache
 import xtdb.compactor.Compactor
 import xtdb.indexer.Indexer
@@ -26,7 +25,6 @@ class NodeBase(
     val allocator: BufferAllocator, private val closeAllocator: Boolean, val config: Xtdb.Config,
     val memoryCache: MemoryCache, val diskCache: DiskCache?,
     val meterRegistry: MeterRegistry?, val tracer: OtelTracer?,
-    val logClusters: Map<LogClusterAlias, Log.Cluster>,
     val remotes: Map<RemoteAlias, Remote>,
     val compactor: Compactor,
     val querySource: IQuerySource,
@@ -37,7 +35,6 @@ class NodeBase(
         compactor.close()
         querySource.close()
         remotes.values.closeAll()
-        logClusters.values.closeAll()
         memoryCache.close()
         if (closeAllocator) allocator.close()
     }
@@ -79,8 +76,18 @@ class NodeBase(
                         }
                     }
 
-                val logClusters = config.logClusters.mapValues { (_, factory) -> open { factory.open() } }
-                val remotes = config.remotes.mapValues { (_, factory) -> open { factory.open() } }
+                val collisions = config.logClusters.keys.intersect(config.remotes.keys)
+                if (collisions.isNotEmpty()) {
+                    throw Incorrect(
+                        "alias appears under both 'logClusters:' and 'remotes:': ${collisions.sorted().joinToString()}",
+                        errorCode = "xtdb/duplicate-remote-alias",
+                        data = mapOf("aliases" to collisions.sorted()),
+                    )
+                }
+
+                val remotes: Map<RemoteAlias, Remote> =
+                    (config.logClusters + config.remotes)
+                        .mapValues { (_, factory) -> open { factory.open() } }
 
                 val compactor = open { compactorFactory.create(meterReg, config.compactor.threads) }
 
@@ -96,7 +103,6 @@ class NodeBase(
                     diskCache = config.diskCache?.build(meterReg),
                     meterRegistry = meterReg,
                     tracer = config.tracer.openTracer(),
-                    logClusters = logClusters,
                     remotes = remotes,
                     compactor = compactor,
                     querySource = querySource,

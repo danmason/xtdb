@@ -37,6 +37,8 @@ import org.apache.kafka.common.serialization.Deserializer
 import org.apache.kafka.common.serialization.Serializer
 import xtdb.DurationSerde
 import xtdb.api.PathSerde
+import xtdb.api.Remote
+import xtdb.api.RemoteAlias
 import xtdb.database.proto.DatabaseConfig
 import xtdb.kafka.proto.KafkaLogConfig
 import xtdb.kafka.proto.kafkaLogConfig
@@ -133,7 +135,7 @@ class KafkaCluster(
     val transactionalIdPrefix: String? = null,
     private val groupId: String = "xtdb",
     coroutineContext: CoroutineContext = Dispatchers.Default
-) : Log.Cluster {
+) : Remote {
     val producer = kafkaConfigMap.openProducer()
     val scope = CoroutineScope(SupervisorJob() + coroutineContext)
 
@@ -324,7 +326,7 @@ class KafkaCluster(
         var transactionalIdPrefix: String? = null,
         var groupId: String = "xtdb",
         @kotlinx.serialization.Transient var coroutineContext: CoroutineContext = Dispatchers.Default
-    ) : Log.Cluster.Factory<KafkaCluster> {
+    ) : Remote.Factory<KafkaCluster> {
 
         fun pollDuration(pollDuration: Duration) = apply { this.pollDuration = pollDuration }
         fun propertiesMap(propertiesMap: Map<String, String>) = apply { this.propertiesMap = propertiesMap }
@@ -580,22 +582,22 @@ class KafkaCluster(
     @Serializable
     @SerialName("!Kafka")
     data class LogFactory @JvmOverloads constructor(
-        val cluster: LogClusterAlias,
+        val cluster: RemoteAlias,
         val topic: String,
-        var replicaCluster: LogClusterAlias = cluster,
+        var replicaCluster: RemoteAlias = cluster,
         var replicaTopic: String = "$topic-replica",
         var autoCreateTopic: Boolean = true,
         var epoch: Int = 0,
     ) : Log.Factory {
 
-        fun replicaCluster(replicaCluster: LogClusterAlias) = apply { this.replicaCluster = replicaCluster }
+        fun replicaCluster(replicaCluster: RemoteAlias) = apply { this.replicaCluster = replicaCluster }
         fun replicaTopic(replicaTopic: String) = apply { this.replicaTopic = replicaTopic }
         fun autoCreateTopic(autoCreateTopic: Boolean) = apply { this.autoCreateTopic = autoCreateTopic }
         fun epoch(epoch: Int) = apply { this.epoch = epoch }
 
-        override fun openSourceLog(clusters: Map<LogClusterAlias, Log.Cluster>): Log<SourceMessage> {
+        override fun openSourceLog(remotes: Map<RemoteAlias, Remote>): Log<SourceMessage> {
             val clusterAlias = this.cluster
-            val cluster = requireNotNull(clusters[clusterAlias] as? KafkaCluster) {
+            val cluster = requireNotNull(remotes[clusterAlias] as? KafkaCluster) {
                 "missing Kafka cluster: '$clusterAlias'"
             }
 
@@ -608,12 +610,12 @@ class KafkaCluster(
             return cluster.KafkaLog(SourceMessage.Codec, topic, epoch)
         }
 
-        override fun openReadOnlySourceLog(clusters: Map<LogClusterAlias, Log.Cluster>) =
-            ReadOnlyLog(openSourceLog(clusters))
+        override fun openReadOnlySourceLog(remotes: Map<RemoteAlias, Remote>) =
+            ReadOnlyLog(openSourceLog(remotes))
 
-        override fun openReplicaLog(clusters: Map<LogClusterAlias, Log.Cluster>): Log<ReplicaMessage> {
+        override fun openReplicaLog(remotes: Map<RemoteAlias, Remote>): Log<ReplicaMessage> {
             val clusterAlias = this.replicaCluster
-            val cluster = requireNotNull(clusters[clusterAlias] as? KafkaCluster) {
+            val cluster = requireNotNull(remotes[clusterAlias] as? KafkaCluster) {
                 "missing Kafka cluster: '$clusterAlias'"
             }
 
@@ -626,8 +628,8 @@ class KafkaCluster(
             return cluster.KafkaLog(ReplicaMessage.Codec, replicaTopic, epoch)
         }
 
-        override fun openReadOnlyReplicaLog(clusters: Map<LogClusterAlias, Log.Cluster>) =
-            ReadOnlyLog(openReplicaLog(clusters))
+        override fun openReadOnlyReplicaLog(remotes: Map<RemoteAlias, Remote>) =
+            ReadOnlyLog(openReplicaLog(remotes))
 
         override fun writeTo(dbConfig: DatabaseConfig.Builder) {
             dbConfig.setOtherLog(ProtoAny.pack(kafkaLogConfig {
@@ -663,8 +665,8 @@ class KafkaCluster(
     /**
      * @suppress
      */
-    class ClusterRegistration : Log.Cluster.Registration {
-        override fun registerSerde(builder: PolymorphicModuleBuilder<Log.Cluster.Factory<*>>) {
+    class ClusterRegistration : Remote.Registration {
+        override fun registerSerde(builder: PolymorphicModuleBuilder<Remote.Factory<*>>) {
             builder.subclass(ClusterFactory::class)
         }
     }

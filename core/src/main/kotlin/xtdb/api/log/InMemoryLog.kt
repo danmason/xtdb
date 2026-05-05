@@ -7,6 +7,8 @@ import kotlinx.coroutines.selects.*
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
+import xtdb.api.Remote
+import xtdb.api.RemoteAlias
 import xtdb.api.log.Log.*
 import xtdb.database.proto.DatabaseConfig
 import xtdb.util.MsgIdUtil
@@ -38,17 +40,17 @@ class InMemoryLog<M> @JvmOverloads constructor(
         fun epoch(epoch: Int) = apply { this.epoch = epoch }
         fun coroutineContext(coroutineContext: CoroutineContext) = apply { this.coroutineContext = coroutineContext }
 
-        override fun openSourceLog(clusters: Map<LogClusterAlias, Cluster>) =
+        override fun openSourceLog(remotes: Map<RemoteAlias, Remote>) =
             InMemoryLog<SourceMessage>(instantSource, epoch, coroutineContext)
 
-        override fun openReadOnlySourceLog(clusters: Map<LogClusterAlias, Cluster>) =
-            ReadOnlyLog(openSourceLog(clusters))
+        override fun openReadOnlySourceLog(remotes: Map<RemoteAlias, Remote>) =
+            ReadOnlyLog(openSourceLog(remotes))
 
-        override fun openReplicaLog(clusters: Map<LogClusterAlias, Cluster>) =
+        override fun openReplicaLog(remotes: Map<RemoteAlias, Remote>) =
             InMemoryLog<ReplicaMessage>(instantSource, epoch, coroutineContext)
 
-        override fun openReadOnlyReplicaLog(clusters: Map<LogClusterAlias, Cluster>) =
-            ReadOnlyLog(openReplicaLog(clusters))
+        override fun openReadOnlyReplicaLog(remotes: Map<RemoteAlias, Remote>) =
+            ReadOnlyLog(openReplicaLog(remotes))
 
         override fun writeTo(dbConfig: DatabaseConfig.Builder) {
             dbConfig.inMemoryLog = inMemoryLog { }

@@ -11,7 +11,6 @@ import xtdb.ZoneIdSerde
 import xtdb.antlr.Sql
 import xtdb.api.Authenticator.Factory.SingleRootUser
 import xtdb.api.log.Log
-import xtdb.api.log.LogClusterAlias
 import xtdb.api.log.MessageId
 import xtdb.api.metrics.HealthzConfig
 import xtdb.api.metrics.TracerConfig
@@ -69,7 +68,7 @@ interface Xtdb : DataSource, AdbcDatabase, AutoCloseable {
     data class Config(
         var server: ServerConfig? = ServerConfig(),
         var flightSql: FlightSqlConfig? = FlightSqlConfig(),
-        var logClusters: Map<LogClusterAlias, Log.Cluster.Factory<*>> = emptyMap(),
+        var logClusters: Map<RemoteAlias, Remote.Factory<*>> = emptyMap(),
         var remotes: Map<RemoteAlias, Remote.Factory<*>> = emptyMap(),
         var log: Log.Factory = Log.inMemoryLog,
         var storage: Storage.Factory = Storage.inMemory(),
@@ -90,9 +89,9 @@ interface Xtdb : DataSource, AdbcDatabase, AutoCloseable {
 
         private val modules: MutableList<XtdbModule.Factory> = mutableListOf()
 
-        fun logClusters(clusters: Map<LogClusterAlias, Log.Cluster.Factory<*>>) = apply { logClusters += clusters }
+        fun logClusters(clusters: Map<RemoteAlias, Remote.Factory<*>>) = apply { logClusters += clusters }
 
-        fun logCluster(alias: LogClusterAlias, cluster: Log.Cluster.Factory<*>) =
+        fun logCluster(alias: RemoteAlias, cluster: Remote.Factory<*>) =
             apply { logClusters += alias to cluster }
 
         fun remotes(remotes: Map<RemoteAlias, Remote.Factory<*>>) = apply { this.remotes += remotes }

@@ -204,7 +204,7 @@ class Database(
                         afterSourceMsgId: MessageId,
                         afterReplicaMsgId: MessageId,
                     ): LogProcessor.LeaderSystem {
-                        val extSource = dbConfig.externalSource?.open(dbName, base.logClusters, base.remotes)
+                        val extSource = dbConfig.externalSource?.open(dbName, base.remotes)
 
                         val leaderProc = LeaderLogProcessor(
                             allocator, base, storage, indexer, crashLogger,

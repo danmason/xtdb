@@ -11,6 +11,8 @@ import kotlinx.serialization.modules.polymorphic
 import kotlinx.serialization.modules.subclass
 import xtdb.DurationSerde
 import xtdb.api.PathSerde
+import xtdb.api.Remote
+import xtdb.api.RemoteAlias
 import xtdb.database.proto.DatabaseConfig
 import xtdb.database.proto.DatabaseConfig.LogCase.*
 import xtdb.util.MsgIdUtil.offsetToMsgId
@@ -28,31 +30,11 @@ interface MessageCodec<M> {
 
 interface Log<M> : AutoCloseable {
 
-    interface Cluster : AutoCloseable {
-
-        interface Factory<C : Cluster> {
-            fun open(): C
-
-            companion object {
-                val serializersModule = SerializersModule {
-                    polymorphic(Factory::class) {
-                        for (reg in ServiceLoader.load(Registration::class.java))
-                            reg.registerSerde(this)
-                    }
-                }
-            }
-        }
-
-        interface Registration {
-            fun registerSerde(builder: PolymorphicModuleBuilder<Factory<*>>)
-        }
-    }
-
     interface Factory {
-        fun openSourceLog(clusters: Map<LogClusterAlias, Cluster>): Log<SourceMessage>
-        fun openReadOnlySourceLog(clusters: Map<LogClusterAlias, Cluster>): Log<SourceMessage>
-        fun openReplicaLog(clusters: Map<LogClusterAlias, Cluster>): Log<ReplicaMessage>
-        fun openReadOnlyReplicaLog(clusters: Map<LogClusterAlias, Cluster>): Log<ReplicaMessage>
+        fun openSourceLog(remotes: Map<RemoteAlias, Remote>): Log<SourceMessage>
+        fun openReadOnlySourceLog(remotes: Map<RemoteAlias, Remote>): Log<SourceMessage>
+        fun openReplicaLog(remotes: Map<RemoteAlias, Remote>): Log<ReplicaMessage>
+        fun openReadOnlyReplicaLog(remotes: Map<RemoteAlias, Remote>): Log<ReplicaMessage>
 
         fun writeTo(dbConfig: DatabaseConfig.Builder)
 

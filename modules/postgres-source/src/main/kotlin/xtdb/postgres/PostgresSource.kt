@@ -10,8 +10,6 @@ import org.postgresql.util.PSQLException
 import xtdb.indexer.TxIndexer
 import xtdb.api.Remote
 import xtdb.api.RemoteAlias
-import xtdb.api.log.Log
-import xtdb.api.log.LogClusterAlias
 import xtdb.database.ExternalSource
 import xtdb.indexer.OpenTx
 import xtdb.indexer.TxIndexer.TxResult
@@ -51,7 +49,6 @@ class PostgresSource(
 
         override fun open(
             dbName: String,
-            clusters: Map<LogClusterAlias, Log.Cluster>,
             remotes: Map<RemoteAlias, Remote>,
         ): ExternalSource {
             val raw = remotes[remote]

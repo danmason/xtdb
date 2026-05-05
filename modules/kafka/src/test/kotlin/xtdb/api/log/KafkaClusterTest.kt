@@ -13,7 +13,9 @@ import org.apache.kafka.common.errors.RecordTooLargeException
 import org.junit.jupiter.api.*
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.testcontainers.kafka.ConfluentKafkaContainer
+import xtdb.api.Xtdb
 import xtdb.api.log.Log.*
 import xtdb.api.storage.Storage
 import xtdb.database.Database
@@ -437,6 +439,28 @@ class KafkaClusterTest {
             assertArrayEquals(byteArrayOf(-1, 2), msg.payload)
 
             job2.cancelAndJoin()
+        }
+    }
+
+    @Test
+    fun `node configured with Kafka cluster under remotes round-trips a tx`() {
+        val topicName = "test-remotes-${UUID.randomUUID()}"
+
+        Xtdb.openNode {
+            server { port = 0 }; flightSql = null
+            remote("my-kafka", KafkaCluster.ClusterFactory(container.bootstrapServers))
+            log(KafkaCluster.LogFactory("my-kafka", topicName))
+        }.use { node ->
+            node.connection.use { conn ->
+                conn.createStatement().use { stmt ->
+                    stmt.execute("INSERT INTO foo (_id, x) VALUES ('a', 1)")
+                    stmt.executeQuery("SELECT _id, x FROM foo").use { rs ->
+                        assertTrue(rs.next())
+                        assertEquals("a", rs.getString("_id"))
+                        assertEquals(1, rs.getInt("x"))
+                    }
+                }
+            }
         }
     }
 

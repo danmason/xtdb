@@ -4,7 +4,6 @@ import org.apache.arrow.memory.BufferAllocator
 import xtdb.NodeBase
 import xtdb.api.TransactionKey
 import xtdb.api.log.Log
-import xtdb.api.log.LogClusterAlias
 import xtdb.api.log.LogOffset
 import xtdb.api.log.MessageId
 import xtdb.api.log.ReplicaMessage
@@ -93,7 +92,7 @@ class DatabaseStorage(
             dbConfig: Database.Config,
         ): DatabaseStorage = safelyOpening {
             val readOnly = dbConfig.isReadOnly
-            val logClusters = base.logClusters
+            val remotes = base.remotes
 
             val bufferPool = open {
                 val bp = dbConfig.storage.open(
@@ -111,16 +110,16 @@ class DatabaseStorage(
                 ?.let { TransactionKey(it.txId, it.systemTime.microsAsInstant) }
 
             val sourceLog = open {
-                val log = if (readOnly) dbConfig.log.openReadOnlySourceLog(logClusters)
-                else dbConfig.log.openSourceLog(logClusters)
+                val log = if (readOnly) dbConfig.log.openReadOnlySourceLog(remotes)
+                else dbConfig.log.openSourceLog(remotes)
 
                 validateOffsets(log, latestCompletedTx)
                 log
             }
 
             val replicaLog = open {
-                if (readOnly) dbConfig.log.openReadOnlyReplicaLog(logClusters)
-                else dbConfig.log.openReplicaLog(logClusters)
+                if (readOnly) dbConfig.log.openReadOnlyReplicaLog(remotes)
+                else dbConfig.log.openReplicaLog(remotes)
             }
 
             DatabaseStorage(sourceLog, replicaLog, bufferPool, metadataManager)

@@ -14,7 +14,7 @@
            java.util.concurrent.TimeUnit
            org.apache.arrow.memory.BufferAllocator
            (xtdb.api TransactionKey Xtdb$Config)
-           (xtdb.api.log Log Log$Cluster$Factory Log$Factory)
+           (xtdb.api.log Log Log$Factory)
            (xtdb.arrow Relation Vector)
            (xtdb.database Database DatabaseStorage Database$Catalog Database$Config)
            xtdb.table.TableRef

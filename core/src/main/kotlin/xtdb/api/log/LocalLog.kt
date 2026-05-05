@@ -14,6 +14,8 @@ import kotlinx.serialization.Transient
 import kotlinx.serialization.UseSerializers
 import xtdb.DurationSerde
 import xtdb.api.PathSerde
+import xtdb.api.Remote
+import xtdb.api.RemoteAlias
 import xtdb.api.log.Log.*
 import xtdb.database.proto.DatabaseConfig
 import xtdb.util.MsgIdUtil
@@ -378,16 +380,16 @@ class LocalLog<M>(
         fun useInstantSourceForNonTx() = apply { this.useInstantSourceForNonTx = true }
         fun coroutineContext(coroutineContext: CoroutineContext) = apply { this.coroutineContext = coroutineContext }
 
-        override fun openSourceLog(clusters: Map<LogClusterAlias, Cluster>) =
+        override fun openSourceLog(remotes: Map<RemoteAlias, Remote>) =
             LocalLog(path, SourceMessage.Codec, instantSource, epoch, useInstantSourceForNonTx, coroutineContext)
 
-        override fun openReadOnlySourceLog(clusters: Map<LogClusterAlias, Cluster>) =
+        override fun openReadOnlySourceLog(remotes: Map<RemoteAlias, Remote>) =
             ReadOnlyLocalLog(path, SourceMessage.Codec, epoch, coroutineContext)
 
-        override fun openReplicaLog(clusters: Map<LogClusterAlias, Cluster>) =
+        override fun openReplicaLog(remotes: Map<RemoteAlias, Remote>) =
             LocalLog(path, ReplicaMessage.Codec, instantSource, epoch, useInstantSourceForNonTx, coroutineContext, logFileName = "REPLICA_LOG")
 
-        override fun openReadOnlyReplicaLog(clusters: Map<LogClusterAlias, Cluster>) =
+        override fun openReadOnlyReplicaLog(remotes: Map<RemoteAlias, Remote>) =
             ReadOnlyLocalLog(path, ReplicaMessage.Codec, epoch, coroutineContext, logFileName = "REPLICA_LOG")
 
         override fun writeTo(dbConfig: DatabaseConfig.Builder) {
