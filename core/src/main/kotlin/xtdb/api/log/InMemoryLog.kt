@@ -1,9 +1,10 @@
 package xtdb.api.log
 
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.selects.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
@@ -13,41 +14,34 @@ import xtdb.api.log.Log.*
 import xtdb.database.proto.DatabaseConfig
 import xtdb.util.MsgIdUtil
 import xtdb.util.MsgIdUtil.msgIdToOffset
-import xtdb.util.MsgIdUtil.offsetToMsgId
 import xtdb.database.proto.inMemoryLog
 import java.time.Instant
 import java.time.InstantSource
 import java.time.temporal.ChronoUnit.MICROS
-import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration.Companion.minutes
-import kotlin.time.Duration.Companion.seconds
 
-class InMemoryLog<M> @JvmOverloads constructor(
+class InMemoryLog<M>(
     private val instantSource: InstantSource,
     override val epoch: Int,
-    coroutineContext: CoroutineContext = Dispatchers.Default
 ) : Log<M> {
-    private val scope = CoroutineScope(coroutineContext)
 
     @SerialName("!InMemory")
     @Serializable
     data class Factory(
         @Transient var instantSource: InstantSource = InstantSource.system(),
         var epoch: Int = 0,
-        @Transient var coroutineContext: CoroutineContext = Dispatchers.Default
     ) : Log.Factory {
         fun instantSource(instantSource: InstantSource) = apply { this.instantSource = instantSource }
         fun epoch(epoch: Int) = apply { this.epoch = epoch }
-        fun coroutineContext(coroutineContext: CoroutineContext) = apply { this.coroutineContext = coroutineContext }
 
         override fun openSourceLog(remotes: Map<RemoteAlias, Remote>) =
-            InMemoryLog<SourceMessage>(instantSource, epoch, coroutineContext)
+            InMemoryLog<SourceMessage>(instantSource, epoch)
 
         override fun openReadOnlySourceLog(remotes: Map<RemoteAlias, Remote>) =
             ReadOnlyLog(openSourceLog(remotes))
 
         override fun openReplicaLog(remotes: Map<RemoteAlias, Remote>) =
-            InMemoryLog<ReplicaMessage>(instantSource, epoch, coroutineContext)
+            InMemoryLog<ReplicaMessage>(instantSource, epoch)
 
         override fun openReadOnlyReplicaLog(remotes: Map<RemoteAlias, Remote>) =
             ReadOnlyLog(openReplicaLog(remotes))
@@ -57,36 +51,28 @@ class InMemoryLog<M> @JvmOverloads constructor(
         }
     }
 
-    internal data class NewMessage<M>(
-        val message: M,
-        val onCommit: CompletableDeferred<MessageMetadata>
-    )
-
-    private val appendCh: Channel<NewMessage<M>> = Channel(100)
-    private val committedCh = appendCh.receiveAsFlow()
-        .map { (message, onCommit) ->
-            // we only use the instantSource for Tx messages so that the tests
-            // that check files can be deterministic
-            val ts = if (message is SourceMessage.Tx || message is SourceMessage.LegacyTx) instantSource.instant() else Instant.now()
-
-            val record = Record(epoch, ++latestSubmittedOffset, ts.truncatedTo(MICROS), message)
-            onCommit.complete(MessageMetadata(epoch, record.logOffset, ts.truncatedTo(MICROS)))
-            record
-        }
-        .shareIn(scope, SharingStarted.Eagerly, REPLAY_BUFFER_SIZE)
+    private val committedCh = MutableSharedFlow<Record<M>>(replay = REPLAY_BUFFER_SIZE)
 
     companion object {
         private const val REPLAY_BUFFER_SIZE = 4096
     }
 
+    private val mutex = Mutex()
+
     @Volatile
     override var latestSubmittedOffset: LogOffset = -1
         private set
 
-    override suspend fun appendMessage(message: M): MessageMetadata =
-        CompletableDeferred<MessageMetadata>()
-            .also { scope.launch { appendCh.send(NewMessage(message, it)) } }
-            .await()
+    // Mutex ensures offset assignment + emission are atomic,
+    // so subscribers always see records in offset order.
+    // We only use the instantSource for Tx messages so that the tests
+    // that check files can be deterministic.
+    override suspend fun appendMessage(message: M): MessageMetadata = mutex.withLock {
+        val ts = if (message is SourceMessage.Tx || message is SourceMessage.LegacyTx) instantSource.instant() else Instant.now()
+        val record = Record(epoch, ++latestSubmittedOffset, ts.truncatedTo(MICROS), message)
+        committedCh.emit(record)
+        MessageMetadata(epoch, record.logOffset, ts.truncatedTo(MICROS))
+    }
 
     override fun openAtomicProducer(transactionalId: String) = object : AtomicProducer<M> {
         override fun openTx() = object : AtomicProducer.Tx<M> {
@@ -173,7 +159,5 @@ class InMemoryLog<M> @JvmOverloads constructor(
         }
     }
 
-    override fun close() {
-        runBlocking { withTimeout(5.seconds) { scope.coroutineContext.job.cancelAndJoin() } }
-    }
+    override fun close() {}
 }
