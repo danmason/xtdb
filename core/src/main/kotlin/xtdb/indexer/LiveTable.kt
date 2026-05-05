@@ -42,15 +42,12 @@ class LiveTable @JvmOverloads constructor(
         validFromVec, validToVec, systemFromVec
     )
 
-    private val hllCalculator = HllCalculator()
-
     fun importData(data: RelationReader) {
         val offset = liveRelation.rowCount
         val count = data.rowCount
         liveRelation.append(data)
         liveTrie = liveTrie.addRange(offset, count)
         trieMetadataCalculator.update(offset, offset + count)
-        hllCalculator.update(opVec, offset, offset + count)
         rowCounter.addRows(count)
     }
 
@@ -66,7 +63,7 @@ class LiveTable @JvmOverloads constructor(
         return BlockMetadata(
             vecTypes = liveRelation.logRelTypes.orEmpty(),
             rowCount = rowCount,
-            hllDeltas = hllCalculator.build()
+            hllDeltas = computeHlls(opVec, 0, rowCount)
         )
     }
 
@@ -93,7 +90,7 @@ class LiveTable @JvmOverloads constructor(
                 dataFileSize = dataFileSize,
                 rowCount = rowCount,
                 trieMetadata = trieMetadataCalculator.build(),
-                hllDeltas = hllCalculator.build()
+                hllDeltas = computeHlls(opVec, 0, rowCount)
             )
         }
     }

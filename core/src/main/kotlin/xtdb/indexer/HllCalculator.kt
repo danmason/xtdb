@@ -6,25 +6,17 @@ import xtdb.util.HLL
 import xtdb.util.add
 import xtdb.util.createHLL
 
-class HllCalculator {
+// Nulls are excluded so that rows appended before a column entered the
+// put schema (which read back as null at the column's vector position)
+// don't inflate that column's cardinality.
+fun computeHlls(opRdr: VectorReader, fromIdx: Int, toIdx: Int): Map<ColumnName, HLL> {
+    val putRdr = opRdr.vectorForOrNull("put") ?: return emptyMap()
 
-    private val hlls = mutableMapOf<ColumnName, HLL>()
-
-    fun update(opRdr: VectorReader, startPos: Int, endPos: Int) {
-        val putRdr = opRdr.vectorForOrNull("put") ?: return
-        val columns = putRdr.keyNames.orEmpty()
-        val keyRdrs = columns.map { it to putRdr.vectorFor(it) }
-
-        for ((col, rdr) in keyRdrs) {
-            hlls.compute(col) { _, hll ->
-                (hll ?: createHLL()).also {
-                    for (i in startPos..<endPos)
-                        if (opRdr.getLeg(i) == "put")
-                            it.add(rdr, i)
-                }
-            }
+    return putRdr.keyNames.orEmpty().associateWith { col ->
+        val rdr = putRdr.vectorFor(col)
+        createHLL().also { hll ->
+            for (i in fromIdx..<toIdx)
+                if (opRdr.getLeg(i) == "put" && !rdr.isNull(i)) hll.add(rdr, i)
         }
     }
-
-    fun build(): Map<ColumnName, HLL> = hlls
 }
