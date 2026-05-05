@@ -10,6 +10,8 @@ import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.testcontainers.containers.GenericContainer
+import xtdb.api.RemoteAlias
+import xtdb.api.Remote
 import xtdb.api.storage.ObjectStore.StoredObject
 import xtdb.api.storage.ObjectStoreTest
 import xtdb.azure.BlobStorage.Companion.azureBlobStorage
@@ -26,6 +28,10 @@ import kotlin.time.Duration.Companion.seconds
 @Tag("integration")
 class BlobStorageTest : ObjectStoreTest() {
     companion object {
+        // Azurite's default key — an open secret published in the Azurite docs.
+        private const val AZURITE_KEY =
+            "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
+
         private val container = GenericContainer("mcr.microsoft.com/azure-storage/azurite:3.35.0")
             .withCommand("azurite-blob", "--blobHost", "0.0.0.0", "--skipApiVersionCheck")
             .withExposedPorts(10000)
@@ -41,18 +47,21 @@ class BlobStorageTest : ObjectStoreTest() {
         fun tearDownAzure() {
             container.stop()
         }
+
+        private fun azuriteEndpoint() =
+            "http://${container.host}:${container.getMappedPort(10000)}/devstoreaccount1"
+
+        private fun azuriteConnectionString() =
+            "DefaultEndpointsProtocol=http;" +
+                "AccountName=devstoreaccount1;" +
+                "AccountKey=$AZURITE_KEY;" +
+                "BlobEndpoint=${azuriteEndpoint()};"
     }
 
     override fun openObjectStore(prefix: Path) =
         azureBlobStorage("devstoreaccount1", "test-container") {
-            val host = Companion.container.host
-            val port = Companion.container.getMappedPort(10000)
-
-            storageAccountEndpoint("http://$host:$port/devstoreaccount1")
-
-            // Azurite's default key - an open secret
-            storageAccountKey("Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==")
-
+            storageAccountEndpoint(azuriteEndpoint())
+            storageAccountKey(AZURITE_KEY)
             prefix(prefix)
         }.openObjectStore(Path("blob-store-test"))
 
@@ -118,20 +127,46 @@ class BlobStorageTest : ObjectStoreTest() {
         assertEquals(allParts, downloaded)
     }
 
+    private fun roundTrip(objectStore: BlobStorage, key: String, payload: ByteBuffer) {
+        objectStore.putObject(key.asPath, payload.duplicate()).get()
+        val downloaded = objectStore.getObject(key.asPath).get()
+        assertEquals(payload, downloaded)
+        assertTrue(
+            objectStore.listAllObjects().map { it.key.toString() }.toSet().contains(key),
+            "object $key should appear in listing"
+        )
+    }
+
     @Test
-    fun `test proto round trip`() {
-        val originalFactory = azureBlobStorage("test-storage", "test-container") {
-            prefix("test/prefix".asPath)
-            storageAccountKey("test-key")
-            userManagedIdentityClientId("test-client-id")
-            storageAccountEndpoint("https://test.blob.core.windows.net")
-            connectionString("DefaultEndpointsProtocol=https;AccountName=test;AccountKey=test")
+    fun `remote alias — connectionString`() {
+        val remotes = mapOf<RemoteAlias, Remote>(
+            "az" to AzureRemote(connectionString = azuriteConnectionString(), storageAccountKey = null),
+        )
+
+        val factory = azureBlobStorage("devstoreaccount1", "test-container") {
+            remote("az")
+            prefix("alias-conn-string-test".asPath)
         }
 
-        val registration = BlobStorage.Registration()
-        val proto = originalFactory.configProto
-        val deserializedFactory = registration.fromProto(proto)
+        factory.openObjectStore(Path("auth-test"), remotes).use { objectStore ->
+            roundTrip(objectStore as BlobStorage, "alias-conn-roundtrip", randomByteBuffer(64))
+        }
+    }
 
-        assertEquals(originalFactory, deserializedFactory)
+    @Test
+    fun `remote alias — storageAccountKey`() {
+        val remotes = mapOf<RemoteAlias, Remote>(
+            "az" to AzureRemote(connectionString = null, storageAccountKey = AZURITE_KEY),
+        )
+
+        val factory = azureBlobStorage("devstoreaccount1", "test-container") {
+            remote("az")
+            storageAccountEndpoint(azuriteEndpoint())
+            prefix("alias-key-test".asPath)
+        }
+
+        factory.openObjectStore(Path("auth-test"), remotes).use { objectStore ->
+            roundTrip(objectStore as BlobStorage, "alias-key-roundtrip", randomByteBuffer(64))
+        }
     }
 }

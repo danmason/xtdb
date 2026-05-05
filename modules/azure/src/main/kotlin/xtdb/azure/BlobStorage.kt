@@ -19,12 +19,15 @@ import kotlinx.serialization.modules.PolymorphicModuleBuilder
 import kotlinx.serialization.modules.subclass
 import reactor.core.Exceptions
 import xtdb.api.PathSerde
+import xtdb.api.Remote
+import xtdb.api.RemoteAlias
 import xtdb.api.storage.ObjectStore
 import xtdb.api.storage.ObjectStore.Companion.throwMissingKey
 import xtdb.api.storage.ObjectStore.StoredObject
 import xtdb.asBytes
 import xtdb.azure.proto.AzureBlobStorageConfig
 import xtdb.azure.proto.azureBlobStorageConfig
+import xtdb.error.Incorrect
 import xtdb.multipart.IMultipartUpload
 import xtdb.multipart.SupportsMultipart
 import xtdb.util.asPath
@@ -73,21 +76,30 @@ import com.google.protobuf.Any as ProtoAny
 class BlobStorage(
     private val factory: Factory,
     private val prefix: Path,
+    private val connectionString: String?,
+    private val storageAccountKey: String?,
     coroutineContext: CoroutineContext = Dispatchers.IO
 ) : ObjectStore, SupportsMultipart<String> {
 
     private val client =
         BlobServiceClientBuilder().run {
-            factory.connectionString?.let { connectionString(it) }
-
             endpoint(factory.storageAccountEndpoint ?: "https://${factory.storageAccount}.blob.core.windows.net")
 
-            credential(DefaultAzureCredentialBuilder().run {
-                factory.userManagedIdentityClientId?.let { managedIdentityClientId(it) }
-                build()
-            })
+            // Credential paths are mutually exclusive: a later credential(...) call
+            // on BlobServiceClientBuilder overrides earlier ones (including the one
+            // installed by connectionString(...)), so we pick exactly one.
+            when {
+                storageAccountKey != null ->
+                    credential(StorageSharedKeyCredential(factory.storageAccount, storageAccountKey))
 
-            factory.storageAccountKey?.let { credential(StorageSharedKeyCredential(factory.storageAccount, it)) }
+                connectionString != null ->
+                    connectionString(connectionString)
+
+                else -> credential(DefaultAzureCredentialBuilder().run {
+                    factory.userManagedIdentityClientId?.let { managedIdentityClientId(it) }
+                    build()
+                })
+            }
 
             buildClient()
         }.getBlobContainerClient(factory.container).also { it.createIfNotExists() }
@@ -323,15 +335,24 @@ class BlobStorage(
         val storageAccount: String,
         val container: String,
         var prefix: Path? = null,
+        @Deprecated(
+            message = "Inline 'storageAccountKey' is deprecated - configure credentials via 'remote' instead",
+            level = DeprecationLevel.WARNING
+        )
         var storageAccountKey: String? = null,
         var userManagedIdentityClientId: String? = null,
         var storageAccountEndpoint: String? = null,
-        var connectionString: String? = null,
+        var remote: RemoteAlias? = null,
         @kotlinx.serialization.Transient var coroutineContext: CoroutineContext = Dispatchers.IO
     ) : ObjectStore.Factory {
 
         fun prefix(prefix: Path) = apply { this.prefix = prefix }
 
+        @Deprecated(
+            message = "Use remote(...) instead of inline credentials",
+            replaceWith = ReplaceWith("remote(alias)"),
+            level = DeprecationLevel.WARNING
+        )
         @Suppress("unused")
         fun storageAccountKey(storageAccountKey: String) = apply { this.storageAccountKey = storageAccountKey }
 
@@ -341,11 +362,47 @@ class BlobStorage(
         @Suppress("unused")
         fun storageAccountEndpoint(endpoint: String) = apply { storageAccountEndpoint = endpoint }
 
-        fun connectionString(connectionString: String) = apply { this.connectionString = connectionString }
+        @Suppress("unused")
+        fun remote(alias: RemoteAlias) = apply { this.remote = alias }
 
         fun coroutineContext(coroutineContext: CoroutineContext) = apply { this.coroutineContext = coroutineContext }
 
-        override fun openObjectStore(storageRoot: Path) = BlobStorage(this, prefix?.resolve(storageRoot) ?: storageRoot, coroutineContext)
+        private fun resolveCredentials(remotes: Map<RemoteAlias, Remote>): Pair<String?, String?> {
+            val alias = remote
+
+            if (alias != null) {
+                if (storageAccountKey != null) {
+                    throw Incorrect(
+                        "Azure BlobStorage has both 'remote' and inline storageAccountKey — use only one",
+                        errorCode = "xtdb.azure/conflicting-config",
+                        data = mapOf("alias" to alias),
+                    )
+                }
+
+                val raw = remotes[alias]
+                    ?: throw Incorrect(
+                        "no remote configured with alias '$alias'",
+                        errorCode = "xtdb.azure/missing-remote",
+                        data = mapOf("alias" to alias),
+                    )
+
+                val az = raw as? AzureRemote
+                    ?: throw Incorrect(
+                        "remote '$alias' is not an !Azure remote",
+                        errorCode = "xtdb.azure/wrong-remote-type",
+                    )
+
+                return az.connectionString to az.storageAccountKey
+            }
+
+            // No connectionString fallback anymore
+            return null to storageAccountKey
+        }
+
+        override fun openObjectStore(storageRoot: Path, remotes: Map<RemoteAlias, Remote>): BlobStorage {
+            val (cs, key) = resolveCredentials(remotes)
+            return BlobStorage(this, prefix?.resolve(storageRoot) ?: storageRoot, cs, key, coroutineContext)
+        }
 
         override val configProto by lazy {
             ProtoAny.pack(azureBlobStorageConfig {
@@ -353,10 +410,16 @@ class BlobStorage(
                 this.container = this@Factory.container
                 this@Factory.prefix?.toString()?.let { this.prefix = it }
 
-                this@Factory.storageAccountKey?.let { this.storageAccountKey = it }
                 this@Factory.userManagedIdentityClientId?.let { this.userManagedIdentityClientId = it }
                 this@Factory.storageAccountEndpoint?.let { this.storageAccountEndpoint = it }
-                this@Factory.connectionString?.let { this.connectionString = it }
+
+                // Credentials are only emitted on the inline-auth path; the alias path
+                // keeps them node-local so they never land on the source log.
+                if (this@Factory.remote != null) {
+                    this.remote = this@Factory.remote!!
+                } else {
+                    this@Factory.storageAccountKey?.let { this.storageAccountKey = it }
+                }
             }, "proto.xtdb.com")
         }
     }
@@ -376,7 +439,7 @@ class BlobStorage(
                     storageAccountKey = config.storageAccountKey.takeIf { it.isNotEmpty() },
                     userManagedIdentityClientId = config.userManagedIdentityClientId.takeIf { it.isNotEmpty() },
                     storageAccountEndpoint = config.storageAccountEndpoint.takeIf { it.isNotEmpty() },
-                    connectionString = config.connectionString.takeIf { it.isNotEmpty() }
+                    remote = config.remote.takeIf { it.isNotEmpty() },
                 )
             }
 
