@@ -19,6 +19,8 @@ class MemoryHashTrie(
     sealed interface Node : HashTrie.Node<Leaf> {
         fun add(trie: MemoryHashTrie, newIdx: Int): Node
 
+        fun addAll(trie: MemoryHashTrie, newIdxs: IntArray): Node
+
         fun compactLogs(trie: MemoryHashTrie): Node
     }
 
@@ -37,13 +39,13 @@ class MemoryHashTrie(
 
     operator fun plus(idx: Int) = MemoryHashTrie(rootNode.add(this, idx), iidReader, logLimit, pageLimit)
 
-    fun addRange(startIdx: Int, count: Int): MemoryHashTrie {
-        var result = this
-        for (i in startIdx until startIdx + count) {
-            result += i
-        }
-        return result
-    }
+    fun addAll(newIdxs: IntArray): MemoryHashTrie =
+        if (newIdxs.isEmpty()) this
+        else MemoryHashTrie(rootNode.addAll(this, newIdxs), iidReader, logLimit, pageLimit)
+
+    fun addRange(startIdx: Int, count: Int): MemoryHashTrie =
+        if (count == 0) this
+        else addAll(IntArray(count) { startIdx + it })
 
     @Suppress("unused")
     fun withIidReader(iidReader: VectorReader) = MemoryHashTrie(rootNode, iidReader, logLimit, pageLimit)
@@ -77,6 +79,32 @@ class MemoryHashTrie(
                     child = child.add(trie, newIdx)
                 }
                 child
+            }
+
+            return Branch(path, newChildren)
+        }
+
+        override fun addAll(trie: MemoryHashTrie, newIdxs: IntArray): Node {
+            if (newIdxs.isEmpty()) return this
+
+            val width = hashChildren.size
+            val perBucket = arrayOfNulls<IntArrayList>(width)
+            val ptr = ArrowBufPointer()
+
+            for (i in newIdxs) {
+                val b = trie.bucketFor(i, path.size, ptr)
+                val list = perBucket[b] ?: IntArrayList().also { perBucket[b] = it }
+                list.add(i)
+            }
+
+            val newChildren = List(width) { childIdx ->
+                val forChild = perBucket[childIdx]
+                if (forChild == null) hashChildren[childIdx]
+                else {
+                    val child = hashChildren[childIdx]
+                        ?: Leaf(trie.logLimit, conjPath(path, childIdx.toByte()))
+                    child.addAll(trie, forChild.toArray())
+                }
             }
 
             return Branch(path, newChildren)
@@ -163,6 +191,54 @@ class MemoryHashTrie(
 
             return if (logCount == trie.logLimit) newLeaf.compactLogs(trie) else newLeaf
         }
+
+        override fun addAll(trie: MemoryHashTrie, newIdxs: IntArray): Node {
+            val n = newIdxs.size
+            if (n == 0) return this
+
+            val combinedLogCount = logCount + n
+
+            // Fast path: appended log stays under the compaction threshold.
+            // Mutates `log` in place to match the existing single-add semantics.
+            if (combinedLogCount < trie.logLimit) {
+                System.arraycopy(newIdxs, 0, log, logCount, n)
+                return Leaf(trie.pageLimit, path, data, log, combinedLogCount)
+            }
+
+            // Boundary: appended log exactly fills the limit; mirror single-add by
+            // appending in place and compacting once.
+            if (combinedLogCount == trie.logLimit) {
+                System.arraycopy(newIdxs, 0, log, logCount, n)
+                return Leaf(trie.pageLimit, path, data, log, combinedLogCount).compactLogs(trie)
+            }
+
+            // Bulk path: too many to log without overflow. Bypass the log entirely:
+            // sort the batch, merge with the existing log + data in one pass, then
+            // split recursively until each leaf is within the page limit (or hits
+            // MAX_LEVEL). Single-add reaches that shape iteratively across many
+            // compactions; the bulk path has all the data up-front so it can
+            // settle in one shot — important because all-same-IID batches would
+            // otherwise stop after one split and stay flat.
+            val sortedNew = sortLog(trie, newIdxs, n)
+            val sortedLog = if (logCount > 0) sortLog(trie, log, logCount) else IntArray(0)
+            val mergedNew = merge(trie, sortedLog, sortedNew)
+            val mergedData = merge(trie, data, mergedNew)
+
+            return buildSubtree(trie, path, mergedData)
+        }
+
+        private fun buildSubtree(trie: MemoryHashTrie, path: ByteArray, sortedData: IntArray): Node =
+            if (sortedData.size > trie.pageLimit && path.size < MAX_LEVEL) {
+                val childBuckets = idxBuckets(trie, sortedData, path)
+                val childNodes = childBuckets
+                    .mapIndexed<IntArray?, Node?> { childIdx, childBucket ->
+                        if (childBucket == null) null
+                        else buildSubtree(trie, conjPath(path, childIdx.toByte()), childBucket)
+                    }
+                Branch(path, childNodes)
+            } else {
+                Leaf(trie.pageLimit, path, sortedData, IntArray(trie.logLimit), 0)
+            }
     }
 
     private fun Node?.asProto(): HashTrieNode =

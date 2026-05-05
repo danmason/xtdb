@@ -185,6 +185,138 @@ rule AddToBranch {
 }
 
 ------------------------------------------------------------
+-- Rules: Batch adding indices
+--
+-- AddAll(indices) is the batch counterpart to AddIndex. The trie walks
+-- once per batch instead of once per index, and the leaf consolidates
+-- the whole batch in a single merge instead of incremental compactions.
+--
+-- Equivalence: AddAll(trie, indices).compact_logs() and the iterated
+-- AddIndex(trie, indices[0])...AddIndex(_, indices[n-1]).compact_logs()
+-- produce tries with the same multiset of contained indices and the
+-- same per-leaf bucketing. Tree SHAPE may legitimately differ — split
+-- timing depends on insertion order, and the bulk path settles to the
+-- final shape in one pass rather than ratcheting via compactions.
+------------------------------------------------------------
+
+rule AddAll {
+    when: AddAll(trie, indices)
+
+    -- Creates new trie with all indices added in one walk
+    ensures:
+        if indices.empty:
+            trie
+        else:
+            MemoryHashTrie.created(
+                root_node: trie.root_node.add_all(indices),
+                iid_reader: trie.iid_reader,
+                log_limit: trie.log_limit,
+                page_limit: trie.page_limit
+            )
+}
+
+rule AddRange {
+    when: AddRange(trie, start_idx, count)
+
+    -- Convenience over AddAll for contiguous index ranges
+    ensures: AddAll(trie, [start_idx, start_idx + 1, ..., start_idx + count - 1])
+}
+
+rule AddAllToBranch {
+    when: Branch.add_all(branch, trie, indices)
+
+    -- Bucket the whole batch by current-level bucket once, then recurse
+    -- per non-empty bucket. One Branch allocation per visited node,
+    -- regardless of batch size.
+
+    let per_bucket = indices.group_by(idx =>
+        BucketFor(trie.iid_reader.get(idx), branch.path.count)
+    )
+
+    ensures: Branch.created(
+        path: branch.path,
+        children: for bucket_idx in 0..(2^config.level_bits - 1):
+            if per_bucket[bucket_idx] = null:
+                branch.children[bucket_idx]
+            else:
+                let child = branch.children[bucket_idx] ?: Leaf.created(
+                    path: branch.path.append(bucket_idx)
+                )
+                child.add_all(trie, per_bucket[bucket_idx])
+    )
+}
+
+rule AddAllToLeaf {
+    when: Leaf.add_all(leaf, trie, indices)
+
+    let combined_log_count = leaf.log_count + indices.count
+
+    ensures:
+        if combined_log_count < trie.log_limit:
+            -- Fast path: still under the compaction threshold, just append
+            Leaf.created(
+                path: leaf.path,
+                data: leaf.data,
+                log: leaf.log.copy_with_appended(leaf.log_count, indices),
+                log_count: combined_log_count
+            )
+        else if combined_log_count = trie.log_limit:
+            -- Boundary: appended log exactly fills the limit; mirror single-add
+            -- by appending and running the (one-pass) compact_logs
+            Leaf.created(
+                path: leaf.path,
+                data: leaf.data,
+                log: leaf.log.copy_with_appended(leaf.log_count, indices),
+                log_count: combined_log_count
+            ).compact_logs(trie)
+        else:
+            -- Bulk path: too many to log without overflow. Bypass the log
+            -- entirely, merge into sorted data, then split recursively until
+            -- each leaf is within page_limit (or hits MAX_LEVEL).
+            --
+            -- The recursive split is load-bearing: single-add reaches deep
+            -- shapes iteratively across many compactions, but the bulk path
+            -- has all the data up-front, so a one-shot split would leave
+            -- all-same-IID batches stuck after the first split.
+            let sorted_new = indices.sort_by(idx =>
+                (trie.iid_reader.get(idx), -idx)
+            )
+            let sorted_log = leaf.log.take(leaf.log_count).sort_by(idx =>
+                (trie.iid_reader.get(idx), -idx)
+            )
+            let merged = merge_sorted(leaf.data, merge_sorted(sorted_log, sorted_new, trie), trie)
+            BuildSubtree(trie, leaf.path, merged)
+}
+
+rule BuildSubtree {
+    when: BuildSubtree(trie, path, sorted_data)
+
+    -- Recursive split for the bulk path; each call returns a Branch with
+    -- recursively-built children, or a Leaf if data fits or path is at max depth.
+
+    ensures:
+        if sorted_data.count > trie.page_limit and path.count < config.max_level:
+            let buckets = sorted_data.group_by(idx =>
+                BucketFor(trie.iid_reader.get(idx), path.count)
+            )
+            Branch.created(
+                path: path,
+                children: for bucket_idx in 0..(2^config.level_bits - 1):
+                    if buckets[bucket_idx] = null:
+                        null
+                    else:
+                        BuildSubtree(trie, path.append(bucket_idx), buckets[bucket_idx])
+            )
+        else:
+            Leaf.created(
+                path: path,
+                data: sorted_data,
+                log: empty_log(trie.log_limit),
+                log_count: 0
+            )
+}
+
+------------------------------------------------------------
 -- Rules: Log compaction
 --
 -- Counter-intuitive: compactLogs merges TWO arrays:
