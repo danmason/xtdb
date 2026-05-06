@@ -30,7 +30,7 @@ import com.google.protobuf.Any as ProtoAny
 
 private val LOG = PostgresSource::class.logger
 
-private const val PROTO_TAG = "proto.xtdb.com"
+private const val PROTO_TAG_PREFIX = "proto.xtdb.com"
 
 class PostgresSource(
     private val dbName: String,
@@ -81,11 +81,11 @@ class PostgresSource(
                 slotName = this@Factory.slotName
                 publicationName = this@Factory.publicationName
                 schemaIncludeList += this@Factory.schemaIncludeList
-            }, PROTO_TAG)
+            }, PROTO_TAG_PREFIX)
         }
 
         class Registration : ExternalSource.Registration {
-            override val protoTag: String get() = "$PROTO_TAG/xtdb.postgres.proto.PostgresSourceConfig"
+            override val protoTag: String get() = "$PROTO_TAG_PREFIX/xtdb.postgres.proto.PostgresSourceConfig"
 
             override fun fromProto(msg: ProtoAny): ExternalSource.Factory {
                 val config = msg.unpack(PostgresSourceConfig::class.java)
