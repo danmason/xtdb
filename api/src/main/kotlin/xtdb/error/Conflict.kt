@@ -15,4 +15,7 @@ class Conflict(
     constructor(
         message: String? = null, errorCode: String? = null, data: Map<String, *>? = null, cause: Throwable? = null
     ) : this(message ?: "Conflict: $errorCode", dataFromMap(CONFLICT, errorCode, data), cause)
+
+    override fun mergeCtx(ctx: Map<String, *>): Conflict =
+        Conflict(message, Anomaly.mergeCtx(getData(), ctx), cause)
 }

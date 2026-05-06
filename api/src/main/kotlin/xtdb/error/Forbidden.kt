@@ -15,4 +15,6 @@ class Forbidden(
         message: String? = null, errorCode: String? = null, data: Map<String, *>? = null, cause: Throwable? = null
     ) : this(message ?: "Forbidden: $errorCode", dataFromMap(FORBIDDEN, errorCode, data), cause)
 
+    override fun mergeCtx(ctx: Map<String, *>): Forbidden =
+        Forbidden(message, Anomaly.mergeCtx(getData(), ctx), cause)
 }

@@ -15,4 +15,6 @@ class NotFound(
         message: String? = null, errorCode: String? = null, data: Map<String, *>? = null, cause: Throwable? = null
     ) : this(message ?: "Not found: $errorCode", dataFromMap(NOT_FOUND, errorCode, data), cause)
 
+    override fun mergeCtx(ctx: Map<String, *>): NotFound =
+        NotFound(message, Anomaly.mergeCtx(getData(), ctx), cause)
 }

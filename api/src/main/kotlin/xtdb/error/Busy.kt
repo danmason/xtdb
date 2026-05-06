@@ -15,5 +15,6 @@ class Busy(
         message: String? = null, errorCode: String? = null, data: Map<String, *>? = null, cause: Throwable? = null
     ) : this(message ?: "Busy: $errorCode", dataFromMap(BUSY, errorCode, data), cause)
 
-
+    override fun mergeCtx(ctx: Map<String, *>): Busy =
+        Busy(message, Anomaly.mergeCtx(getData(), ctx), cause)
 }

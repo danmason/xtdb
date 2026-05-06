@@ -15,4 +15,7 @@ class Incorrect(
     constructor(
         message: String? = null, errorCode: String? = null, data: Map<String, *>? = null, cause: Throwable? = null
     ) : this(message ?: "Incorrect: $errorCode", dataFromMap(INCORRECT, errorCode, data), cause)
+
+    override fun mergeCtx(ctx: Map<String, *>): Incorrect =
+        Incorrect(message, Anomaly.mergeCtx(getData(), ctx), cause)
 }
