@@ -132,7 +132,7 @@ sealed interface SourceMessage {
                 && defaultTz == other.defaultTz
                 && user == other.user
                 && userMetadata.contentEquals(other.userMetadata)
-                && externalSourceToken == other.externalSourceToken)
+                && externalSourceToken.contentEquals(other.externalSourceToken))
 
         override fun hashCode(): Int {
             var result = txOps.contentHashCode()
@@ -140,7 +140,7 @@ sealed interface SourceMessage {
             result = 31 * result + defaultTz.hashCode()
             result = 31 * result + (user?.hashCode() ?: 0)
             result = 31 * result + (userMetadata?.contentHashCode() ?: 0)
-            result = 31 * result + (externalSourceToken?.hashCode() ?: 0)
+            result = 31 * result + (externalSourceToken?.contentHashCode() ?: 0)
             return result
         }
     }
