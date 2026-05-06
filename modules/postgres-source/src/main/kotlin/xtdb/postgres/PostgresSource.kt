@@ -110,7 +110,7 @@ class PostgresSource(
     ) {
         LOG.info("[$dbName] Partition $partition assigned (slot=$slotName)")
 
-        val token = afterToken?.let { ProtoAny.parseFrom(it).unpack(PostgresSourceToken::class.java) }
+        val token = afterToken?.let { PostgresSourceToken.parseFrom(it) }
         LOG.debug { "[$dbName] Recovered token: ${token ?: "none"}" }
 
         try {
@@ -168,10 +168,10 @@ class PostgresSource(
         driver.openSnapshot().use { snapshot ->
             closeOnCancel(snapshot) {
                 for (batch in snapshot.batches()) {
-                    val token = ProtoAny.pack(postgresSourceToken {
+                    val token = postgresSourceToken {
                         latestCommittedLsn = snapshot.slotLsn
                         snapshotCompleted = false
-                    }, PROTO_TAG).toByteArray()
+                    }.toByteArray()
 
                     txIndexer.indexTx(token) { openTx ->
                         for (op in batch) {
@@ -181,10 +181,10 @@ class PostgresSource(
                     }
                 }
 
-                val completeToken = ProtoAny.pack(postgresSourceToken {
+                val completeToken = postgresSourceToken {
                     latestCommittedLsn = snapshot.slotLsn
                     snapshotCompleted = true
-                }, PROTO_TAG).toByteArray()
+                }.toByteArray()
 
                 LOG.debug { "[$dbName] Writing snapshot-complete marker" }
                 txIndexer.indexTx(completeToken) {
@@ -200,10 +200,10 @@ class PostgresSource(
         driver.openStream(startLsn).use { stream ->
             while (currentCoroutineContext().isActive) {
                 stream.nextTransaction { tx ->
-                    val token = ProtoAny.pack(postgresSourceToken {
+                    val token = postgresSourceToken {
                         latestCommittedLsn = tx.lsn
                         snapshotCompleted = true
-                    }, PROTO_TAG).toByteArray()
+                    }.toByteArray()
 
                     txIndexer.indexTx(token, systemTime = tx.commitTime) { openTx ->
                         for (op in tx.ops) {
