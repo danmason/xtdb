@@ -1,6 +1,5 @@
 package xtdb.database
 
-import com.google.protobuf.StringValue
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.cancelAndJoin
@@ -35,7 +34,6 @@ import java.time.InstantSource
 import java.time.ZoneId
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration.Companion.milliseconds
-import com.google.protobuf.Any as ProtoAny
 
 class ExternalSourceTest {
 
@@ -202,14 +200,14 @@ class ExternalSourceTest {
         val lp = leaderProc(watchers = watchers, extSource = extSource, ctx = coroutineContext)
 
         try {
-            val token = ProtoAny.pack(StringValue.of("kafka-offset:42"))
+            val token = "kafka-offset:42".toByteArray()
             extSource.channel.send(token)
 
             delay(500.milliseconds)
 
             val watcherToken = watchers.externalSourceToken
             assertNotNull(watcherToken)
-            assertEquals("kafka-offset:42", watcherToken!!.unpack(StringValue::class.java).value)
+            assertArrayEquals(token, watcherToken)
         } finally {
             lp.close()
         }

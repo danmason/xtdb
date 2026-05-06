@@ -57,7 +57,7 @@ sealed interface ReplicaMessage {
                                 },
                                 it.tableDataMap.mapValues { (_, v) -> v.toByteArray() },
                                 dbOp,
-                                it.externalSourceToken.takeIf { _ -> it.hasExternalSourceToken() }
+                                it.externalSourceToken.takeIf { _ -> it.hasExternalSourceToken() }?.toByteArray()
                             )
                         }
 
@@ -68,14 +68,14 @@ sealed interface ReplicaMessage {
                         ReplicaLogMessage.MessageCase.BLOCK_BOUNDARY -> msg.blockBoundary.let {
                             BlockBoundary(
                                 it.blockIndex, it.latestProcessedMsgId,
-                                it.externalSourceToken.takeIf { _ -> it.hasExternalSourceToken() }
+                                it.externalSourceToken.takeIf { _ -> it.hasExternalSourceToken() }?.toByteArray()
                             )
                         }
 
                         ReplicaLogMessage.MessageCase.BLOCK_UPLOADED -> msg.blockUploaded.let {
                             BlockUploaded(
                                 it.storageVersion, it.storageEpoch, it.blockIndex, it.latestProcessedMsgId, it.triesList,
-                                it.externalSourceToken.takeIf { _ -> it.hasExternalSourceToken() }
+                                it.externalSourceToken.takeIf { _ -> it.hasExternalSourceToken() }?.toByteArray()
                             )
                         }
 
@@ -133,7 +133,7 @@ sealed interface ReplicaMessage {
 
                     null -> {}
                 }
-                this@ResolvedTx.externalSourceToken?.let { externalSourceToken = it }
+                this@ResolvedTx.externalSourceToken?.let { externalSourceToken = ByteString.copyFrom(it) }
             }
         }
     }
@@ -160,7 +160,7 @@ sealed interface ReplicaMessage {
             blockBoundary = blockBoundary {
                 this.blockIndex = this@BlockBoundary.blockIndex
                 this.latestProcessedMsgId = this@BlockBoundary.latestProcessedMsgId
-                this@BlockBoundary.externalSourceToken?.let { this.externalSourceToken = it }
+                this@BlockBoundary.externalSourceToken?.let { this.externalSourceToken = ByteString.copyFrom(it) }
             }
         }
     }
@@ -178,7 +178,7 @@ sealed interface ReplicaMessage {
                 this.blockIndex = this@BlockUploaded.blockIndex
                 this.latestProcessedMsgId = this@BlockUploaded.latestProcessedMsgId
                 tries.addAll(this@BlockUploaded.tries)
-                this@BlockUploaded.externalSourceToken?.let { this.externalSourceToken = it }
+                this@BlockUploaded.externalSourceToken?.let { this.externalSourceToken = ByteString.copyFrom(it) }
             }
         }
     }

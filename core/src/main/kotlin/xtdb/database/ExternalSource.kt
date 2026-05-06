@@ -10,7 +10,7 @@ import xtdb.database.proto.DatabaseConfig
 import java.util.*
 import com.google.protobuf.Any as ProtoAny
 
-typealias ExternalSourceToken = ProtoAny
+typealias ExternalSourceToken = ByteArray
 
 interface ExternalSource : AutoCloseable {
 

@@ -1,5 +1,6 @@
 package xtdb.catalog
 
+import com.google.protobuf.ByteString
 import xtdb.database.ExternalSourceToken
 import xtdb.api.TransactionKey
 import xtdb.api.log.MessageId
@@ -83,7 +84,7 @@ class BlockCatalog(
             boundaryReplicaMsgId?.let { this.boundaryReplicaMsgId = it }
             this.tableNames.addAll(tables.map { it.sym.toString() })
             secondaryDatabases?.let { this.secondaryDatabases.putAll(it) }
-            externalSourceToken?.let { this.externalSourceToken = it }
+            externalSourceToken?.let { this.externalSourceToken = ByteString.copyFrom(it) }
         }
     }
 
@@ -103,7 +104,7 @@ class BlockCatalog(
         get() = latestBlock?.let { block -> block.boundaryReplicaMsgId.takeIf { block.hasBoundaryReplicaMsgId() } }
 
     val externalSourceToken: ExternalSourceToken?
-        get() = latestBlock?.takeIf { it.hasExternalSourceToken() }?.externalSourceToken
+        get() = latestBlock?.takeIf { it.hasExternalSourceToken() }?.externalSourceToken?.toByteArray()
 
     val allTables: List<TableRef> get() = latestBlock?.tableNamesList.orEmpty().map { TableRef.parse(dbName, it) }
 

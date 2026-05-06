@@ -1,7 +1,5 @@
 package xtdb.api.log
 
-import com.google.protobuf.Any as ProtoAny
-import com.google.protobuf.StringValue
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import xtdb.block.proto.Block
@@ -9,7 +7,7 @@ import xtdb.catalog.BlockCatalog
 
 class ExternalSourceTokenTest {
 
-    private val testToken: ProtoAny = ProtoAny.pack(StringValue.of("kafka-offset:42"))
+    private val testToken: ByteArray = "kafka-offset:42".toByteArray()
 
     @Test
     fun `BlockBoundary round-trips external source token`() {
@@ -22,7 +20,7 @@ class ExternalSourceTokenTest {
         assertEquals(1, decoded.blockIndex)
         assertEquals(100, decoded.latestProcessedMsgId)
         assertNotNull(decoded.externalSourceToken)
-        assertEquals(testToken, decoded.externalSourceToken)
+        assertArrayEquals(testToken, decoded.externalSourceToken)
     }
 
     @Test
@@ -44,7 +42,7 @@ class ExternalSourceTokenTest {
 
         assertInstanceOf(ReplicaMessage.BlockUploaded::class.java, decoded)
         decoded as ReplicaMessage.BlockUploaded
-        assertEquals(testToken, decoded.externalSourceToken)
+        assertArrayEquals(testToken, decoded.externalSourceToken)
     }
 
     @Test
@@ -55,7 +53,7 @@ class ExternalSourceTokenTest {
 
         assertInstanceOf(SourceMessage.BlockUploaded::class.java, decoded)
         decoded as SourceMessage.BlockUploaded
-        assertEquals(testToken, decoded.externalSourceToken)
+        assertArrayEquals(testToken, decoded.externalSourceToken)
     }
 
     @Test
@@ -74,7 +72,7 @@ class ExternalSourceTokenTest {
 
         val parsed = Block.parseFrom(block.toByteArray())
         assertTrue(parsed.hasExternalSourceToken())
-        assertEquals(testToken, parsed.externalSourceToken)
+        assertArrayEquals(testToken, parsed.externalSourceToken.toByteArray())
     }
 
     @Test
@@ -94,7 +92,7 @@ class ExternalSourceTokenTest {
         )
         blockCatalog.refresh(block)
 
-        assertEquals(testToken, blockCatalog.externalSourceToken)
+        assertArrayEquals(testToken, blockCatalog.externalSourceToken)
     }
 
     @Test

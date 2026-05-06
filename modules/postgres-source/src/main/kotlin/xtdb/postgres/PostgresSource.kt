@@ -110,7 +110,7 @@ class PostgresSource(
     ) {
         LOG.info("[$dbName] Partition $partition assigned (slot=$slotName)")
 
-        val token = afterToken?.unpack(PostgresSourceToken::class.java)
+        val token = afterToken?.let { ProtoAny.parseFrom(it).unpack(PostgresSourceToken::class.java) }
         LOG.debug { "[$dbName] Recovered token: ${token ?: "none"}" }
 
         try {
@@ -171,7 +171,7 @@ class PostgresSource(
                     val token = ProtoAny.pack(postgresSourceToken {
                         latestCommittedLsn = snapshot.slotLsn
                         snapshotCompleted = false
-                    }, PROTO_TAG)
+                    }, PROTO_TAG).toByteArray()
 
                     txIndexer.indexTx(token) { openTx ->
                         for (op in batch) {
@@ -184,7 +184,7 @@ class PostgresSource(
                 val completeToken = ProtoAny.pack(postgresSourceToken {
                     latestCommittedLsn = snapshot.slotLsn
                     snapshotCompleted = true
-                }, PROTO_TAG)
+                }, PROTO_TAG).toByteArray()
 
                 LOG.debug { "[$dbName] Writing snapshot-complete marker" }
                 txIndexer.indexTx(completeToken) {
@@ -203,7 +203,7 @@ class PostgresSource(
                     val token = ProtoAny.pack(postgresSourceToken {
                         latestCommittedLsn = tx.lsn
                         snapshotCompleted = true
-                    }, PROTO_TAG)
+                    }, PROTO_TAG).toByteArray()
 
                     txIndexer.indexTx(token, systemTime = tx.commitTime) { openTx ->
                         for (op in tx.ops) {

@@ -2,7 +2,6 @@ edition = "2023";
 
 package xtdb.block.proto;
 
-import "google/protobuf/any.proto";
 import "xtdb/log/proto/log.proto";
 import "xtdb/database/proto/db.proto";
 
@@ -47,5 +46,5 @@ message Block {
     int64 boundary_replica_msg_id = 6;
 
     // opaque token tracking how far the leader consumed an external source (e.g. CDC offset)
-    google.protobuf.Any external_source_token = 7;
+    bytes external_source_token = 7;
 }

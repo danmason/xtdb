@@ -85,7 +85,7 @@ sealed interface SourceMessage {
                             SourceLogMessage.MessageCase.BLOCK_UPLOADED -> msg.blockUploaded.let {
                                 BlockUploaded(
                                     it.storageVersion, it.storageEpoch, it.blockIndex, it.latestProcessedMsgId, it.triesList,
-                                    it.externalSourceToken.takeIf { _ -> it.hasExternalSourceToken() }
+                                    it.externalSourceToken.takeIf { _ -> it.hasExternalSourceToken() }?.toByteArray()
                                 )
                             }
 
@@ -96,7 +96,7 @@ sealed interface SourceMessage {
                                     defaultTz = ZoneId.of(it.defaultTz),
                                     user = if (it.hasUser()) it.user else null,
                                     userMetadata = if (it.userMetadata.isEmpty) null else it.userMetadata.toByteArray(),
-                                    externalSourceToken = it.externalSourceToken.takeIf { _ -> it.hasExternalSourceToken() }
+                                    externalSourceToken = it.externalSourceToken.takeIf { _ -> it.hasExternalSourceToken() }?.toByteArray()
                                 )
                             }
 
@@ -121,7 +121,7 @@ sealed interface SourceMessage {
                 defaultTz = this@Tx.defaultTz.id
                 this@Tx.user?.let { user = it }
                 this@Tx.userMetadata?.let { userMetadata = ByteString.copyFrom(it) }
-                this@Tx.externalSourceToken?.let { externalSourceToken = it }
+                this@Tx.externalSourceToken?.let { externalSourceToken = ByteString.copyFrom(it) }
             }
         }
 
@@ -193,7 +193,7 @@ sealed interface SourceMessage {
                 this.blockIndex = this@BlockUploaded.blockIndex
                 this.latestProcessedMsgId = this@BlockUploaded.latestProcessedMsgId
                 tries.addAll(this@BlockUploaded.tries)
-                this@BlockUploaded.externalSourceToken?.let { this.externalSourceToken = it }
+                this@BlockUploaded.externalSourceToken?.let { this.externalSourceToken = ByteString.copyFrom(it) }
             }
         }
     }
