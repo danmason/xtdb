@@ -1,6 +1,7 @@
 [versions]
 antlr = "4.13.2"
 arrow = "19.0.0"
+async-profiler = "4.4"
 arrow-adbc = "0.23.0"
 aws-sdk = "2.42.30"
 azure = "1.13.1"
@@ -44,6 +45,8 @@ arrow-adbc-driver-manager = { group = "org.apache.arrow.adbc", name = "adbc-driv
 arrow-adbc-fsql = { group = "org.apache.arrow.adbc", name = "adbc-driver-flight-sql", version.ref = "arrow-adbc" }
 arrow-flight-sql = { group = "org.apache.arrow", name = "flight-sql", version.ref = "arrow" }
 netty-common = { group = "io.netty", name = "netty-common", version.ref = "netty" }
+
+async-profiler = { group = "tools.profiler", name = "async-profiler", version.ref = "async-profiler" }
 
 roaring-bitmap = { group = "org.roaringbitmap", name = "RoaringBitmap", version = "1.6.14" }
 hppc = { group = "com.carrotsearch", name = "hppc", version = "0.10.0" }

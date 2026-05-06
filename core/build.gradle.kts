@@ -55,6 +55,8 @@ dependencies {
 
     api(libs.caffeine)
 
+    api(libs.async.profiler)
+
     // healthz server
     api(libs.ring.core)
     api(libs.ring.jetty9.adapter)
