@@ -3,8 +3,11 @@
             [xtdb.api :as xt]
             [xtdb.node :as xtn]
             [xtdb.operator.order-by :as order-by]
-            [xtdb.test-util :as tu])
-  (:import (java.time Instant Duration ZoneId)))
+            [xtdb.test-util :as tu]
+            [xtdb.util :as util])
+  (:import (java.nio.file Files)
+           (java.nio.file.attribute FileAttribute)
+           (java.time Instant Duration ZoneId)))
 
 (t/use-fixtures :each tu/with-allocator)
 
@@ -70,6 +73,34 @@
                              [::tu/pages batches]]
                             {}))
             "spilling to disk"))))
+
+(t/deftest test-order-by-spill-cleans-up
+  (let [parent (Files/createTempDirectory "test-spill-" (make-array FileAttribute 0))]
+    (try
+      (with-redefs [util/tmp-dir (fn
+                                   ([] (Files/createTempDirectory parent "" (make-array FileAttribute 0)))
+                                   ([prefix] (Files/createTempDirectory parent prefix (make-array FileAttribute 0))))]
+        (binding [order-by/*block-size* 10]
+          (let [data (map-indexed (fn [i d] {:a d :b i})
+                                  (repeatedly 1000 #(rand-int 1000000)))
+                batches (mapv vec (partition-all 13 data))]
+
+            (t/testing "happy path — loader fully drained"
+              (tu/query-ra [:order-by {:order-specs '[[a] [b]]}
+                            [::tu/pages batches]]
+                           {})
+              (t/is (empty? (.list (.toFile parent)))
+                    "spill dir cleaned up after full drain"))
+
+            (t/testing "early close — LIMIT 1 closes cursor before loader exhausts"
+              (tu/query-ra [:top {:limit 1}
+                            [:order-by {:order-specs '[[a] [b]]}
+                             [::tu/pages batches]]]
+                           {})
+              (t/is (empty? (.list (.toFile parent)))
+                    "spill dir cleaned up after early cursor close")))))
+      (finally
+        (util/delete-dir parent)))))
 
 (t/deftest test-order-by-temporal-range-5269
   ;; #5269 — IOOBE in ORDER BY DESC with external sort.

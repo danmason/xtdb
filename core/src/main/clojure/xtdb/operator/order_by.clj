@@ -256,7 +256,8 @@
   (close [_]
     (util/try-close read-rel)
     (util/try-close loader)
-    (util/try-close in-cursor)))
+    (util/try-close in-cursor)
+    (when sort-dir (util/delete-dir sort-dir))))
 
 (defmethod lp/emit-expr :order-by [{:keys [opts relation]} args]
   (let [{:keys [order-specs]} opts]
