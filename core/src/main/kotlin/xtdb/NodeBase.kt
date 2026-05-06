@@ -15,6 +15,7 @@ import xtdb.error.Incorrect
 import xtdb.cache.MemoryCache
 import xtdb.compactor.Compactor
 import xtdb.indexer.Indexer
+import xtdb.profiler.Profiler
 import xtdb.query.IQuerySource
 import xtdb.util.closeAll
 import xtdb.util.maxDirectMemory
@@ -89,11 +90,15 @@ class NodeBase(
                     (config.logClusters + config.remotes)
                         .mapValues { (_, factory) -> open { factory.open() } }
 
+                // Constructed eagerly so async-profiler attaches while the JVM is quiet — first attach
+                // mid-query fails ("Could not find VMThread bridge") on some JDKs.
+                val profiler = Profiler()
+
                 val compactor = open { compactorFactory.create(meterReg, config.compactor.threads) }
 
                 val infoSchema = infoSchemaFactory.invoke(al, meterReg)
                 val scanEmitter = scanEmitterFactory.invoke(infoSchema)
-                val querySource = open { querySourceFactory.create(al, meterReg, scanEmitter) }
+                val querySource = open { querySourceFactory.create(al, meterReg, scanEmitter, profiler) }
 
                 NodeBase(
                     allocator = al,

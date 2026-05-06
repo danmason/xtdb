@@ -34,8 +34,8 @@
 
 (t/deftest round-trips-lists
   (let [tx (xt/execute-tx *node* [[:put-docs :docs {:xt/id :foo, :list [1 2 ["foo" "bar"]]}]
-                                 [:sql "INSERT INTO docs (_id, list) VALUES ('bar', ARRAY[?, 2, 3 + 5])"
-                                  [4]]])]
+                                  [:sql "INSERT INTO docs (_id, list) VALUES ('bar', ARRAY[?, 2, 3 + 5])"
+                                   [4]]])]
     (t/is (= (serde/->TxKey 0 (time/->instant #inst "2020-01-01")) tx))
 
     (t/is (= [{:id :foo, :list [1 2 ["foo" "bar"]]}
@@ -61,7 +61,7 @@
 
 (t/deftest round-trips-structs
   (let [tx (xt/execute-tx *node* [[:put-docs :docs {:xt/id :foo, :struct {:a 1, :b {:c "bar"}}}]
-                                 [:put-docs :docs {:xt/id :bar, :struct {:a true, :d 42.0}}]])]
+                                  [:put-docs :docs {:xt/id :bar, :struct {:a true, :d 42.0}}]])]
     (t/is (= (serde/->TxKey 0 (time/->instant #inst "2020-01-01")) tx))
 
     (t/is (= #{{:id :foo, :struct {:a 1, :b {:c "bar"}}}
@@ -89,7 +89,7 @@
                 [:tm "TIME '13:21:14.932254'"]
 
                 #_ ; FIXME #323
-                [:tmtz "TIME '11:21:14.932254-08:00'"]]]
+                  [:tmtz "TIME '11:21:14.932254-08:00'"]]]
 
       (xt/execute-tx *node* (vec (for [[t lit] lits]
                                    [:sql (format "INSERT INTO bar (_id, v) VALUES (?, %s)" lit)
@@ -215,7 +215,6 @@
                           [[:sql "INSERT INTO users (_id, name, _valid_from) VALUES (?, ?, ?)"
                             ["dave", "Dave", #inst "2018"]
                             ["claire", "Claire", #inst "2019"]]])))
-
 
   (t/is (= (serde/->TxKey 1 (time/->instant #inst "2020-01-02"))
            (xt/execute-tx *node*
@@ -556,6 +555,13 @@ VALUES (2, DATE '2022-01-01', DATE '2021-01-01')"])
                          "EXPLAIN ANALYZE SELECT * FROM foo"))]
         (t/is (every? #(nil? (:pushdowns %)) scans))))))
 
+(t/deftest test-profile
+  (let [results (xt/q tu/*node* "PROFILE SELECT SUM(x) AS s FROM generate_series(1, 1000000) AS g(x)")]
+    (t/is (= 1 (count results)))
+    (let [path (:path (first results))]
+      (t/is (string? path))
+      (t/is (re-matches #"profiles/[0-9a-f-]+\.html" path)))))
+
 (t/deftest test-transit-encoding-of-ast-objects-3019
   (t/is (anomalous? [:incorrect nil #"Not all variables in expression are in scope"]
                     (xt/q tu/*node*
@@ -583,10 +589,10 @@ VALUES (2, DATE '2022-01-01', DATE '2021-01-01')"])
                    (reduce (fn [acc _] (let [acc (inc acc)] (if (== 10 acc) (reduced acc) acc))) 0))))
 
   #_ ; FIXME pgwire batching
-  (t/is (= 10 (->> (xt/plan-q tu/*node* "(SELECT docs.num FROM docs)
+    (t/is (= 10 (->> (xt/plan-q tu/*node* "(SELECT docs.num FROM docs)
                                          UNION ALL
                                          (SELECT 1 / 0)")
-                   (reduce (fn [acc _] (let [acc (inc acc)] (if (== 10 acc) (reduced acc) acc))) 0)))))
+                     (reduce (fn [acc _] (let [acc (inc acc)] (if (== 10 acc) (reduced acc) acc))) 0)))))
 
 (t/deftest first-class-tstz-ranges
   (xt/submit-tx tu/*node* [[:put-docs :users {:xt/id :dave, :name "Dave"}]])

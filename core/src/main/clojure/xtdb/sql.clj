@@ -3034,6 +3034,7 @@
     (let [query-vars (into (cond
                              (boolean (.ANALYZE ctx)) {:explain-analyze? true}
                              (boolean (.EXPLAIN ctx)) {:explain? true}
+                             (boolean (.PROFILE ctx)) {:profile? true}
                              :else {})
                            (keep (partial accept-visitor this))
                            (some-> (.settingQueryVariables ctx)
@@ -3410,7 +3411,7 @@
             (-> plan
                 (vary-meta (fn [m]
                              (-> (or m {})
-                                 (into (select-keys stmt [:explain? :explain-analyze? :current-time :snapshot-token :snapshot-time]))
+                                 (into (select-keys stmt [:explain? :explain-analyze? :profile? :current-time :snapshot-token :snapshot-time]))
                                  (assoc :param-count @!param-count
                                         :warnings @!warnings
                                         :ordered-outer-projection col-syms)))))))))))

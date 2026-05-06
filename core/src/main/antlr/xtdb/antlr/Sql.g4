@@ -14,7 +14,7 @@ directSqlStatement : directlyExecutableStatement ';'? EOF ;
 multiSqlStatement : directlyExecutableStatement ( ';' directlyExecutableStatement )* ';'? EOF ;
 
 directlyExecutableStatement
-    : (EXPLAIN ANALYZE?)? settingQueryVariables? queryExpression #QueryExpr
+    : (EXPLAIN ANALYZE? | PROFILE)? settingQueryVariables? queryExpression #QueryExpr
 
     | 'INSERT' 'INTO' targetTable insertColumnsAndSource returningStatement? #InsertStatement
 

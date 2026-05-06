@@ -52,7 +52,8 @@
            (xtdb.indexer Snapshot)
            xtdb.NodeBase
            xtdb.operator.scan.IScanEmitter
-           (xtdb.query IQuerySource IQuerySource$Factory PreparedDmlQuery PreparedDmlQuery$Assert PreparedDmlQuery$Delete PreparedDmlQuery$Erase PreparedDmlQuery$Patch PreparedDmlQuery$Put PreparedQuery)
+           xtdb.profiler.Profiler
+           (xtdb.query IQuerySource IQuerySource$Factory IQuerySource$QueryDatabase PreparedDmlQuery PreparedDmlQuery$Assert PreparedDmlQuery$Delete PreparedDmlQuery$Erase PreparedDmlQuery$Patch PreparedDmlQuery$Put PreparedQuery)
            (xtdb.table TableRef)
            xtdb.util.RefCounter))
 
@@ -245,6 +246,9 @@
                                   "row_count" #xt/type :i64
                                   "pushdowns" #xt/type :transit})))
 
+(def ^:private profile-types
+  (LinkedHashMap. ^Map (identity {"path" #xt/type :utf8})))
+
 (defn- truncate-pushdown-val [k v]
   (case k
     :bloom-filter {:cardinality (.getCardinality ^org.roaringbitmap.buffer.MutableRoaringBitmap v)}
@@ -285,13 +289,14 @@
 
 (defrecord QuerySource [^BufferAllocator allocator
                         ^IScanEmitter scan-emitter
+                        ^Profiler profiler
                         ^Counter query-warning-counter
                         ^RefCounter ref-ctr
                         ^Cache plan-cache]
   PQuerySource
   (-plan-query [_ parsed-query query-opts table-info]
     (.get plan-cache [parsed-query (-> query-opts
-                                       (select-keys [:default-db :db-names :decorrelate? :explain? :explain-analyze? :arg-fields])
+                                       (select-keys [:default-db :db-names :decorrelate? :explain? :explain-analyze? :profile? :arg-fields])
                                        (update :decorrelate? (fnil boolean true))
                                        (assoc :table-info table-info))]
           (fn [[parsed-query query-opts]]
@@ -301,7 +306,7 @@
                   {:keys [ordered-outer-projection warnings param-count], :or {param-count 0}, :as plan-meta} (meta plan)]
 
               (into (select-keys plan-meta [:current-time :snapshot-token :snapshot-time
-                                            :explain? :explain-analyze?])
+                                            :explain? :explain-analyze? :profile?])
                     {:plan plan,
                      :conformed-plan conformed-plan
                      :scan-cols (->> (lp/child-exprs conformed-plan)
@@ -356,6 +361,7 @@
                         vec-types (cond
                                     (:explain? planned-query) (explain-plan-types (->explain-plan emitted-query))
                                     (:explain-analyze? planned-query) explain-analyze-types
+                                    (:profile? planned-query) profile-types
                                     :else (:vec-types emitted-query))]
                     (mapv (fn [[col-name ^VectorType vec-type]]
                             (.toField vec-type col-name))
@@ -423,7 +429,8 @@
 
                                          (wrap-result-types result-types)
                                          (wrap-dynvars current-time expr/*snapshot-token* default-tz ref-ctr))]
-                          (if (:explain-analyze? planned-query)
+                          (cond
+                            (:explain-analyze? planned-query)
                             (try
                               (.forEachRemaining cursor (fn [_]))
                               (-> (PagesCursor. allocator nil [(explain-analyze-results cursor)])
@@ -432,6 +439,19 @@
                               (finally
                                 (util/close cursor)))
 
+                            (:profile? planned-query)
+                            (try
+                              (let [^IQuerySource$QueryDatabase qdb (.databaseOrNull db-cat (:default-db query-opts))
+                                    buffer-pool (.. qdb getStorage getBufferPool)
+                                    path (.record profiler buffer-pool
+                                                  ^Runnable (fn [] (.forEachRemaining cursor (fn [_]))))]
+                                (-> (PagesCursor. allocator nil [[{:path (str path)}]])
+                                    (wrap-result-types profile-types)
+                                    (wrap-closeables ref-ctr [closeable-query-span args snaps allocator])))
+                              (finally
+                                (util/close cursor)))
+
+                            :else
                             (-> cursor
                                 (wrap-closeables ref-ctr [closeable-query-span args snaps allocator]))))))
 
@@ -500,10 +520,11 @@
 
 (defn ->factory ^xtdb.query.IQuerySource$Factory []
   (reify IQuerySource$Factory
-    (create [_ allocator meter-registry scan-emitter]
+    (create [_ allocator meter-registry scan-emitter profiler]
       (->query-source {:allocator allocator
                        :metrics-registry meter-registry
-                       :scan-emitter scan-emitter}))))
+                       :scan-emitter scan-emitter
+                       :profiler profiler}))))
 
 (defn- cache-key-fn [^IKeyFn key-fn]
   (let [cache (HashMap.)]

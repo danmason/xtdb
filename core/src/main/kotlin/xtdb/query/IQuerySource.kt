@@ -6,6 +6,7 @@ import xtdb.database.DatabaseName
 import xtdb.database.DatabaseState
 import xtdb.database.DatabaseStorage
 import xtdb.indexer.Snapshot
+import xtdb.profiler.Profiler
 import xtdb.table.TableRef
 import java.time.Instant
 
@@ -26,6 +27,6 @@ interface IQuerySource : AutoCloseable {
     fun preparePatchDocsQuery(table: TableRef, validFrom: Instant?, validTo: Instant?, dbs: QueryCatalog, opts: Any?): PreparedQuery
 
     fun interface Factory {
-        fun create(allocator: BufferAllocator, meterRegistry: MeterRegistry?, scanEmitter: Any): IQuerySource
+        fun create(allocator: BufferAllocator, meterRegistry: MeterRegistry?, scanEmitter: Any, profiler: Profiler): IQuerySource
     }
 }

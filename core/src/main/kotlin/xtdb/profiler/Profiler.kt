@@ -24,6 +24,14 @@ class Profiler {
     private val asyncProfiler: AsyncProfiler = AsyncProfiler.getInstance()
     private val lock = ReentrantLock()
 
+    init {
+        // async-profiler's first attach can fail ("Could not find VMThread bridge") if it happens
+        // while the JVM is mid-work; do a no-op start/stop now while things are quiet so
+        // subsequent record() calls reuse the cached bridge.
+        asyncProfiler.execute("start,event=cpu")
+        asyncProfiler.execute("stop")
+    }
+
     fun record(bufferPool: BufferPool, block: Runnable): Path =
             lock.withLock {
                 val tmpFile = Files.createTempFile("xtdb-profile-", ".html")
