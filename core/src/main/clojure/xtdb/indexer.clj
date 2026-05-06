@@ -303,21 +303,21 @@
                   (if-let [e (try
                                (err/wrap-anomaly {}
                                                  (dotimes [tx-op-idx (.getValueCount tx-ops-rdr)]
-                                                   (.recordCallable tx-timer
-                                                                    #(case (.getLeg tx-ops-rdr tx-op-idx)
-                                                                       "xtql" (throw (err/unsupported :xtdb/xtql-dml-removed
-                                                                                                      (str/join ["XTQL DML is no longer supported, as of 2.0.0-beta7. "
-                                                                                                                 "Please use SQL DML statements instead - "
-                                                                                                                 "see the release notes for more information."])))
-                                                                       "sql" (.indexOp ^OpIndexer @!sql-idxer tx-op-idx)
-                                                                       "put-docs" (.indexOp ^OpIndexer @!put-docs-idxer tx-op-idx)
-                                                                       "patch-docs" (.indexOp ^OpIndexer @!patch-docs-idxer tx-op-idx)
-                                                                       "delete-docs" (.indexOp ^OpIndexer @!delete-docs-idxer tx-op-idx)
-                                                                       "erase-docs" (.indexOp ^OpIndexer @!erase-docs-idxer tx-op-idx)
-                                                                       "call" (throw (err/unsupported :xtdb/tx-fns-removed
-                                                                                                      (str/join ["tx-fns are no longer supported, as of 2.0.0-beta7. "
-                                                                                                                 "Please use ASSERTs and SQL DML statements instead - "
-                                                                                                                 "see the release notes for more information."]))))))
+                                                   (metrics/record-callable! tx-timer
+                                                                             (case (.getLeg tx-ops-rdr tx-op-idx)
+                                                                               "xtql" (throw (err/unsupported :xtdb/xtql-dml-removed
+                                                                                                              (str/join ["XTQL DML is no longer supported, as of 2.0.0-beta7. "
+                                                                                                                         "Please use SQL DML statements instead - "
+                                                                                                                         "see the release notes for more information."])))
+                                                                               "sql" (.indexOp ^OpIndexer @!sql-idxer tx-op-idx)
+                                                                               "put-docs" (.indexOp ^OpIndexer @!put-docs-idxer tx-op-idx)
+                                                                               "patch-docs" (.indexOp ^OpIndexer @!patch-docs-idxer tx-op-idx)
+                                                                               "delete-docs" (.indexOp ^OpIndexer @!delete-docs-idxer tx-op-idx)
+                                                                               "erase-docs" (.indexOp ^OpIndexer @!erase-docs-idxer tx-op-idx)
+                                                                               "call" (throw (err/unsupported :xtdb/tx-fns-removed
+                                                                                                              (str/join ["tx-fns are no longer supported, as of 2.0.0-beta7. "
+                                                                                                                         "Please use ASSERTs and SQL DML statements instead - "
+                                                                                                                         "see the release notes for more information."]))))))
                                                  nil)
 
                                (catch Anomaly$Caller e e))]

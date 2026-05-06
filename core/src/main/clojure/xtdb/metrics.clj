@@ -7,9 +7,10 @@
 (defn add-counter
   (^io.micrometer.core.instrument.Counter [reg name] (add-counter reg name {}))
   (^io.micrometer.core.instrument.Counter [reg name {:keys [description]}]
-   (cond-> (Counter/builder name)
-     description (.description description)
-     :always (.register reg))))
+   (when reg
+     (cond-> (Counter/builder name)
+       description (.description description)
+       :always (.register reg)))))
 
 (defn inc-counter! [^Counter counter]
   (when counter
@@ -23,25 +24,30 @@
 (def percentiles [0.75 0.85 0.95 0.98 0.99 0.999])
 
 (defn add-timer ^io.micrometer.core.instrument.Timer [reg name {:keys [^String description]}]
-  (cond-> (.. (Timer/builder name)
-              (publishPercentiles (double-array percentiles)))
-    description (.description description)
-    :always (.register reg)))
+  (when reg
+    (cond-> (.. (Timer/builder name)
+                (publishPercentiles (double-array percentiles)))
+      description (.description description)
+      :always (.register reg))))
 
 (defmacro wrap-query [q timer]
-  `(let [^Timer$Sample sample# (Timer/start)
+  `(let [^Timer timer# ~timer
+         ^Timer$Sample sample# (when timer# (Timer/start))
          ^Stream stream# ~q]
-     (.onClose stream# (fn [] (.stop sample# ~timer)))))
+     (if sample#
+       (.onClose stream# (fn [] (.stop sample# timer#)))
+       stream#)))
 
 (defn add-gauge
   ([reg meter-name obj f] (add-gauge reg meter-name obj f {}))
   ([^MeterRegistry reg meter-name obj f {:keys [unit tag]}]
-   (let [[tag-key tag-value] tag]
-     (-> (Gauge/builder meter-name obj f)
-         (cond->
-             unit (.baseUnit (str unit))
-             tag (.tag tag-key tag-value))
-         (.register reg)))))
+   (when reg
+     (let [[tag-key tag-value] tag]
+       (-> (Gauge/builder meter-name obj f)
+           (cond->
+               unit (.baseUnit (str unit))
+               tag (.tag tag-key tag-value))
+           (.register reg))))))
 
 (defn start-span ^Span [^Tracer tracer ^String span-name {:keys [^Span parent-span attributes]}]
   (let [span-builder (if parent-span
