@@ -6,6 +6,7 @@ import org.apache.arrow.vector.types.pojo.ArrowType.Struct.INSTANCE as STRUCT_TY
 import xtdb.NodeBase
 import xtdb.ResultCursor
 import xtdb.api.TransactionKey
+import xtdb.api.log.ReplicaMessage
 import xtdb.arrow.Relation
 import xtdb.arrow.RelationReader
 import xtdb.arrow.VectorReader
@@ -19,6 +20,7 @@ import xtdb.arrow.SingletonListReader
 import xtdb.database.ExternalSourceToken
 import xtdb.error.Conflict
 import xtdb.error.Incorrect
+import xtdb.indexer.Indexer.Companion.addTxRow
 import xtdb.kw
 import xtdb.query.IQuerySource
 import xtdb.query.PreparedDmlQuery
@@ -69,6 +71,29 @@ class OpenTx(
         tableTxs.mapNotNull { (tableRef, tableTx) ->
             tableTx.serializeTxData()?.let { tableRef.schemaAndTable to it }
         }.toMap()
+
+    /**
+     * Stamps the `xt/txs` row for this tx and assembles the [ReplicaMessage.ResolvedTx] describing
+     * the outcome. The result still has to be appended to the replica log and imported by the
+     * caller — `commitTx` doesn't publish anything itself.
+     *
+     * `committed` is derived from [error]: a non-null error means the tx aborted.
+     */
+    @JvmOverloads
+    fun commitTx(
+        error: Throwable? = null,
+        userMetadata: Map<*, *>? = null,
+    ): ReplicaMessage.ResolvedTx {
+        addTxRow(dbState.name, txKey, error, userMetadata)
+        return ReplicaMessage.ResolvedTx(
+            txKey.txId, txKey.systemTime,
+            committed = error == null,
+            error = error,
+            tableData = serializeTableData(),
+            dbOp = null,
+            externalSourceToken = externalSourceToken,
+        )
+    }
 
     private fun queryCatalog(): IQuerySource.QueryCatalog {
         val liveIndex = dbState.liveIndex

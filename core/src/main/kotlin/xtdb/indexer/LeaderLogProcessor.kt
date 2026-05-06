@@ -22,7 +22,6 @@ import xtdb.error.Anomaly
 import xtdb.error.Interrupted
 import xtdb.garbage_collector.BlockGarbageCollector
 import xtdb.garbage_collector.TrieGarbageCollector
-import xtdb.indexer.Indexer.Companion.addTxRow
 import xtdb.indexer.TxIndexer.TxResult
 import xtdb.table.TableRef
 import xtdb.time.InstantUtil.asMicros
@@ -349,23 +348,8 @@ class LeaderLogProcessor(
 
     override fun startTx(txKey: TransactionKey): OpenTx = openTx(txKey, null)
 
-    private suspend fun commit(openTx: OpenTx, result: TxResult) {
-        val txKey = openTx.txKey
-        val externalSourceToken = openTx.externalSourceToken
-        val tableData = openTx.serializeTableData()
-
-        val resolvedTx = ReplicaMessage.ResolvedTx(
-            txKey.txId, txKey.systemTime,
-            committed = when (result) {
-                is TxResult.Committed -> true
-                is TxResult.Aborted -> false
-            },
-            error = (result as? TxResult.Aborted)?.error,
-            tableData, dbOp = null,
-            externalSourceToken = externalSourceToken,
-        )
-
-        submit(ExtSourceTask.ResolvedTx(resolvedTx))
+    private suspend fun commit(openTx: OpenTx, error: Throwable?, userMetadata: Map<*, *>?) {
+        submit(ExtSourceTask.ResolvedTx(openTx.commitTx(error, userMetadata)))
     }
 
     override suspend fun indexTx(
@@ -389,16 +373,14 @@ class LeaderLogProcessor(
 
             when (result) {
                 is TxResult.Committed -> openTx.use {
-                    it.addTxRow(dbName, txKey, null, result.userMetadata)
-                    commit(it, result)
+                    commit(it, error = null, result.userMetadata)
                 }
 
                 is TxResult.Aborted -> {
                     txErrorCounter?.increment()
                     openTx.close()
                     openTx(txKey, externalSourceToken).use { abortTx ->
-                        abortTx.addTxRow(dbName, txKey, result.error, result.userMetadata)
-                        commit(abortTx, result)
+                        commit(abortTx, result.error, result.userMetadata)
                     }
                 }
             }

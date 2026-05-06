@@ -22,7 +22,6 @@
            (java.time Instant)
            (org.apache.arrow.memory BufferAllocator)
            xtdb.api.TransactionKey
-           (xtdb.api.log ReplicaMessage$ResolvedTx)
            (xtdb.arrow Relation Relation$ILoader RelationAsStructReader RelationReader RowCopier VectorReader)
            (xtdb.error Anomaly$Caller Interrupted)
            (xtdb.database DatabaseState)
@@ -243,20 +242,6 @@
 
         nil))))
 
-(defn- add-tx-row! [db-name ^OpenTx open-tx, ^TransactionKey tx-key, ^Throwable t, user-metadata]
-  (Indexer/addTxRow open-tx db-name tx-key t user-metadata))
-
-
-(defn- commit [^OpenTx open-tx committed? error]
-  (let [table-data (.serializeTableData open-tx)
-        ^TransactionKey tx-key (.getTxKey open-tx)]
-    (ReplicaMessage$ResolvedTx. (.getTxId tx-key)
-                                (.getSystemTime tx-key)
-                                (boolean committed?)
-                                error
-                                table-data
-                                nil nil)))
-
 (defrecord IndexerForDatabase [^BufferAllocator allocator, node-id
                                db-name, ^LiveIndex live-index
                                ^CrashLogger crash-logger
@@ -290,8 +275,7 @@
             (util/with-open [open-tx (.startTx tx-indexer tx-key)]
               (when tx-error-counter
                 (.increment tx-error-counter))
-              (add-tx-row! db-name open-tx tx-key err user-metadata)
-              (commit open-tx false err)))
+              (.commitTx open-tx err user-metadata)))
 
           (let [system-time (or system-time default-system-time)
                 tx-key (serde/->TxKey msg-id system-time)]
@@ -299,8 +283,7 @@
               (if (nil? tx-ops-rdr)
                 (do
                                     (util/with-open [open-tx (.startTx tx-indexer tx-key)]
-                    (add-tx-row! db-name open-tx tx-key skipped-exn user-metadata)
-                    (commit open-tx false skipped-exn)))
+                    (.commitTx open-tx skipped-exn user-metadata)))
 
                 (let [tx-opts {:snapshot-token (basis/->time-basis-str {db-name [system-time]})
                                :current-time system-time
@@ -345,17 +328,13 @@
                       (util/with-open [open-tx (.startTx tx-indexer tx-key)]
                         (when tx-error-counter
                           (.increment tx-error-counter))
-                        (add-tx-row! db-name open-tx tx-key e user-metadata)
-                        (commit open-tx false e)))
+                        (.commitTx open-tx e user-metadata)))
 
-                    (do
-                      (add-tx-row! db-name open-tx tx-key nil user-metadata)
-                      (commit open-tx true nil)))))))))))
+                    (.commitTx open-tx nil user-metadata))))))))))
 
   (addTxRow [_ tx-key e]
     (util/with-open [open-tx (.startTx tx-indexer tx-key)]
-      (add-tx-row! db-name open-tx tx-key e {})
-      (commit open-tx (nil? e) e))))
+      (.commitTx open-tx e {}))))
 
 (defn ->factory ^xtdb.indexer.Indexer$Factory []
   (reify Indexer$Factory
