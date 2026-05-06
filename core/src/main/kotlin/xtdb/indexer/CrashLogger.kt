@@ -1,17 +1,26 @@
 package xtdb.indexer
 
+import clojure.lang.Keyword
+import clojure.lang.PersistentArrayMap
+import clojure.lang.RT
+import clojure.lang.Var
 import org.apache.arrow.memory.BufferAllocator
 import xtdb.arrow.Relation
 import xtdb.arrow.RelationReader
 import xtdb.arrow.VectorReader
+import xtdb.error.Anomaly
+import xtdb.error.Anomaly.Companion.wrapAnomaly
 import xtdb.storage.BufferPool
+import xtdb.error.Interrupted
 import xtdb.table.TableRef
 import xtdb.util.asPath
 import java.nio.file.Path
 import xtdb.util.closeOnCatch
 import xtdb.util.info
 import xtdb.util.logger
+import xtdb.util.requiringResolve
 import xtdb.util.warn
+import java.io.StringWriter
 import java.nio.ByteBuffer
 import java.time.InstantSource
 import java.time.temporal.ChronoUnit
@@ -78,5 +87,55 @@ class CrashLogger @JvmOverloads constructor(
         txOpsRdr?.let { writeTxOpsToArrow(crashDir.resolve("tx-ops.arrow"), it) }
 
         LOG.info("crash log written: $crashDir")
+    }
+
+    // Use clojure.pprint to preserve byte-for-byte the EDN header format the
+    // original `crash-log!` helper produced. We rebind `*out*` to a StringWriter
+    // via pushThreadBindings so pprint writes there instead of System.out.
+    @PublishedApi
+    internal fun crashEdn(ex: Throwable, data: Map<String, *>): String {
+        val pprint = requiringResolve("clojure.pprint/pprint")
+        val out = RT.`var`("clojure.core", "*out*")
+
+        val entries = mutableMapOf<Any, Any?>()
+        for ((k, v) in data) entries[Keyword.intern(k)] = v
+        entries[Keyword.intern("ex")] = ex
+        val map = PersistentArrayMap.create(entries)
+
+        val sw = StringWriter()
+        Var.pushThreadBindings(PersistentArrayMap.create(mapOf<Any, Any?>(out to sw)))
+        try {
+            pprint.invoke(map)
+        } finally {
+            Var.popThreadBindings()
+        }
+        return sw.toString()
+    }
+
+    inline fun <R> withCrashLog(
+        msg: String,
+        table: TableRef,
+        liveIndex: LiveIndex,
+        openTxTable: OpenTx.Table,
+        queryRel: RelationReader? = null,
+        txOpsRdr: VectorReader? = null,
+        data: Map<String, *> = emptyMap<String, Any?>(),
+        block: () -> R,
+    ): R {
+        try {
+            return wrapAnomaly(data, block)
+        } catch (e: Interrupted) {
+            throw e
+        } catch (e: Anomaly.Caller) {
+            throw e
+        } catch (e: Anomaly) {
+            // crash-log-write failures must not mask the real error
+            try {
+                writeCrashLog(crashEdn(e, data + ("msg" to msg)), table, liveIndex, openTxTable, queryRel, txOpsRdr)
+            } catch (t: Throwable) {
+                e.addSuppressed(t)
+            }
+            throw e
+        }
     }
 }
