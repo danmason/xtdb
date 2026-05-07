@@ -24,6 +24,8 @@ import xtdb.storage.BufferPool
 import xtdb.trie.TrieCatalog
 import java.time.Instant
 
+private fun txKeyAt(txId: Long) = TransactionKey(txId, Instant.EPOCH)
+
 class FollowerLogProcessorTest {
 
     private lateinit var allocator: RootAllocator
@@ -82,12 +84,13 @@ class FollowerLogProcessorTest {
 
     @Test
     fun `ResolvedTx skips already-applied transactions`() = runTest {
+        every { liveIndex.latestCompletedTx } returns txKeyAt(42)
         watchers = Watchers(42)
         val proc = makeProcessor(afterSourceMsgId = 42)
 
-        val tx40 = ReplicaMessage.ResolvedTx(40, Instant.now(), true, null, emptyMap())
-        val tx42 = ReplicaMessage.ResolvedTx(42, Instant.now(), true, null, emptyMap())
-        val tx43 = ReplicaMessage.ResolvedTx(43, Instant.now(), true, null, emptyMap())
+        val tx40 = ReplicaMessage.ResolvedTx(40, Instant.now(), true, null, emptyMap(), srcMsgId = 40)
+        val tx42 = ReplicaMessage.ResolvedTx(42, Instant.now(), true, null, emptyMap(), srcMsgId = 42)
+        val tx43 = ReplicaMessage.ResolvedTx(43, Instant.now(), true, null, emptyMap(), srcMsgId = 43)
 
         proc.processRecords(listOf(record(0, tx40), record(1, tx42), record(2, tx43)))
 
@@ -106,16 +109,17 @@ class FollowerLogProcessorTest {
         val startBlock = block { blockIndex = 5 }
         blockCatalog = BlockCatalog("test", startBlock)
         dbState = DatabaseState("test", blockCatalog, tableCatalog, trieCatalog, liveIndex)
+        every { liveIndex.latestCompletedTx } returns txKeyAt(1000)
         watchers = Watchers(1000)
         val proc = makeProcessor(afterSourceMsgId = 1000)
 
         val staleRecords = listOf(
-            record(0, ReplicaMessage.ResolvedTx(500, Instant.now(), true, null, emptyMap())),
+            record(0, ReplicaMessage.ResolvedTx(500, Instant.now(), true, null, emptyMap(), srcMsgId = 500)),
             record(1, ReplicaMessage.TriesAdded(1, 1, emptyList(), sourceMsgId = 600)),
             record(2, ReplicaMessage.BlockBoundary(1, 700)),
             record(3, ReplicaMessage.BlockUploaded(1, 1, 1, 800, emptyList())),
             // at the boundary — should also be skipped
-            record(4, ReplicaMessage.ResolvedTx(1000, Instant.now(), true, null, emptyMap())),
+            record(4, ReplicaMessage.ResolvedTx(1000, Instant.now(), true, null, emptyMap(), srcMsgId = 1000)),
         )
 
         proc.processRecords(staleRecords)
@@ -153,10 +157,11 @@ class FollowerLogProcessorTest {
 
     @Test
     fun `processes messages after skipping stale ones`() = runTest {
+        every { liveIndex.latestCompletedTx } returns txKeyAt(1000)
         watchers = Watchers(1000)
         val proc = makeProcessor(afterSourceMsgId = 1000)
 
-        val tx1001 = ReplicaMessage.ResolvedTx(1001, Instant.now(), true, null, emptyMap())
+        val tx1001 = ReplicaMessage.ResolvedTx(1001, Instant.now(), true, null, emptyMap(), srcMsgId = 1001)
 
         proc.processRecords(listOf(
             // stale
@@ -167,6 +172,52 @@ class FollowerLogProcessorTest {
 
         verify { liveIndex.importTx(tx1001) }
         assert(proc.latestSourceMsgId == 1001L)
+
+        proc.close()
+    }
+
+    @Test
+    fun `ext-source ResolvedTx does not advance latestSourceMsgId`() = runTest {
+        // Reproduces #5580: an ext-source ResolvedTx (srcMsgId=null) followed by a BlockBoundary
+        // whose latestProcessedMsgId reflects the leader's still-default source watermark would
+        // previously violate `srcMsgId >= latestSourceMsgId` on the follower.
+        every { liveIndex.latestCompletedTx } returns null
+        val proc = makeProcessor()
+
+        val blockProto = block { blockIndex = 0 }.toByteArray()
+        every { bufferPool.getByteArray(BlockCatalog.blockFilePath(0)) } returns blockProto
+
+        val extTx = ReplicaMessage.ResolvedTx(0, Instant.now(), true, null, emptyMap(), srcMsgId = null)
+        proc.processRecords(listOf(
+            record(0, extTx),
+            record(1, ReplicaMessage.BlockBoundary(0, -1)),
+            record(2, ReplicaMessage.BlockUploaded(Storage.VERSION, 1, 0, -1, emptyList())),
+        ))
+
+        verify { liveIndex.importTx(extTx) }
+        assertEquals(-1L, proc.latestSourceMsgId,
+            "ext-source ResolvedTx must not bump latestSourceMsgId")
+        assertEquals(0L, blockCatalog.currentBlockIndex)
+
+        proc.close()
+    }
+
+    @Test
+    fun `mixed ext-source and source-log ResolvedTxs advance the right watermarks`() = runTest {
+        every { liveIndex.latestCompletedTx } returns null
+        val proc = makeProcessor()
+
+        val ext0 = ReplicaMessage.ResolvedTx(0, Instant.now(), true, null, emptyMap(), srcMsgId = null)
+        val src1 = ReplicaMessage.ResolvedTx(1, Instant.now(), true, null, emptyMap(), srcMsgId = 1)
+        val ext2 = ReplicaMessage.ResolvedTx(2, Instant.now(), true, null, emptyMap(), srcMsgId = null)
+
+        proc.processRecords(listOf(record(0, ext0), record(1, src1), record(2, ext2)))
+
+        verify { liveIndex.importTx(ext0) }
+        verify { liveIndex.importTx(src1) }
+        verify { liveIndex.importTx(ext2) }
+        assertEquals(1L, proc.latestSourceMsgId,
+            "latestSourceMsgId reflects only the source-log tx; ext-source txs leave it alone")
 
         proc.close()
     }

@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.first
 import org.apache.arrow.memory.BufferAllocator
 import xtdb.api.TransactionKey
 import xtdb.api.TransactionResult
+import xtdb.api.TxId
 import xtdb.api.log.*
 import xtdb.api.storage.Storage
 import xtdb.block.proto.Block.parseFrom
@@ -44,6 +45,11 @@ class FollowerLogProcessor @JvmOverloads constructor(
     override var latestSourceMsgId: MessageId = afterSourceMsgId
         private set
 
+    // Tracked separately from `latestSourceMsgId` because ext-source ResolvedTxs carry an
+    // independent `txId` counter rather than a source-log msgId. Used for ResolvedTx staleness;
+    // initialised from the persisted live-index state.
+    private var latestTxId: TxId = dbState.liveIndex.latestCompletedTx?.txId ?: -1L
+
     private sealed interface ReplicaState {
         data class Active(val msgId: MessageId) : ReplicaState
         data class Failed(val msgId: MessageId, val exception: Throwable) : ReplicaState
@@ -77,7 +83,7 @@ class FollowerLogProcessor @JvmOverloads constructor(
 
     private val ReplicaMessage.stale get() =
         when (this) {
-            is ReplicaMessage.ResolvedTx -> txId <= latestSourceMsgId
+            is ReplicaMessage.ResolvedTx -> txId <= latestTxId
             is ReplicaMessage.TriesAdded -> sourceMsgId <= latestSourceMsgId
             is ReplicaMessage.BlockBoundary -> blockIndex <= (blockCatalog.currentBlockIndex ?: -1)
             is ReplicaMessage.BlockUploaded -> blockIndex <= (blockCatalog.currentBlockIndex ?: -1)
@@ -117,8 +123,9 @@ class FollowerLogProcessor @JvmOverloads constructor(
                     if (msg.committed) TransactionResult.Committed(txKey)
                     else TransactionResult.Aborted(txKey, msg.error)
 
-                latestSourceMsgId = msg.txId
-                watchers.notifyTx(result, msg.txId, msg.externalSourceToken)
+                latestTxId = msg.txId
+                val effectiveSrcMsgId = msg.srcMsgId?.also { latestSourceMsgId = it } ?: latestSourceMsgId
+                watchers.notifyTx(result, effectiveSrcMsgId, msg.externalSourceToken)
             }
 
             is ReplicaMessage.TriesAdded -> {

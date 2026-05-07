@@ -3,6 +3,7 @@ package xtdb.indexer
 import org.apache.arrow.memory.BufferAllocator
 import xtdb.api.TransactionKey
 import xtdb.api.TransactionResult
+import xtdb.api.TxId
 import xtdb.api.log.DbOp
 import xtdb.api.log.Log
 import xtdb.api.log.MessageId
@@ -43,11 +44,16 @@ class TransitionLogProcessor(
     private val blockCatalog = dbState.blockCatalog
     private val trieCatalog = dbState.trieCatalog
 
+    // Tracked separately from `latestSourceMsgId` because ext-source ResolvedTxs carry an
+    // independent `txId` counter rather than a source-log msgId. Used for ResolvedTx staleness;
+    // initialised from the persisted live-index state.
+    private var latestTxId: TxId = liveIndex.latestCompletedTx?.txId ?: -1L
+
     private val allocator = allocator.newChildAllocator("transition-log-processor", 0, Long.MAX_VALUE)
 
     private val ReplicaMessage.stale get() =
         when (this) {
-            is ReplicaMessage.ResolvedTx -> txId <= latestSourceMsgId
+            is ReplicaMessage.ResolvedTx -> txId <= latestTxId
             is ReplicaMessage.TriesAdded -> sourceMsgId <= latestSourceMsgId
             is ReplicaMessage.BlockBoundary -> blockIndex <= (blockCatalog.currentBlockIndex ?: -1)
             is ReplicaMessage.BlockUploaded -> blockIndex <= (blockCatalog.currentBlockIndex ?: -1)
@@ -59,10 +65,7 @@ class TransitionLogProcessor(
         val msgId = record.msgId
         when (val msg = record.message) {
             is ReplicaMessage.ResolvedTx -> {
-                val latestTxId = liveIndex.latestCompletedTx?.txId
-                if (latestTxId == null || msg.txId > latestTxId) {
-                    liveIndex.importTx(msg)
-                }
+                liveIndex.importTx(msg)
                 val txKey = TransactionKey(msg.txId, msg.systemTime)
                 if (msg.committed) {
                     when (val dbOp = msg.dbOp) {
@@ -88,8 +91,9 @@ class TransitionLogProcessor(
                     if (msg.committed) TransactionResult.Committed(txKey)
                     else TransactionResult.Aborted(txKey, msg.error)
 
-                latestSourceMsgId = msg.txId
-                watchers.notifyTx(result, msg.txId, msg.externalSourceToken)
+                latestTxId = msg.txId
+                val effectiveSrcMsgId = msg.srcMsgId?.also { latestSourceMsgId = it } ?: latestSourceMsgId
+                watchers.notifyTx(result, effectiveSrcMsgId, msg.externalSourceToken)
             }
 
             is ReplicaMessage.TriesAdded -> {
