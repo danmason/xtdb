@@ -35,10 +35,6 @@ message ResolvedTx {
     }
 
     bytes external_source_token = 8;
-
-    // Set when this tx came from the source log; absent for ext-source txs whose tx_id is an
-    // independent counter rather than a source-log msgId.
-    int64 src_msg_id = 9 [features.field_presence = EXPLICIT];
 }
 
 message BlockBoundary {

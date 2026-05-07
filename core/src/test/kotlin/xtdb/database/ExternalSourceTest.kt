@@ -140,7 +140,6 @@ class ExternalSourceTest {
             val resolved = replicaMessages[0] as ReplicaMessage.ResolvedTx
             assertEquals(true, resolved.committed)
             assertEquals(0L, resolved.txId)
-            assertNull(resolved.srcMsgId, "ext-source ResolvedTx should not carry a source-log msgId")
         }
     }
 

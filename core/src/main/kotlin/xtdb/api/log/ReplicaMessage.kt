@@ -57,8 +57,7 @@ sealed interface ReplicaMessage {
                                 },
                                 it.tableDataMap.mapValues { (_, v) -> v.toByteArray() },
                                 dbOp,
-                                it.externalSourceToken.takeIf { _ -> it.hasExternalSourceToken() }?.toByteArray(),
-                                if (it.hasSrcMsgId()) it.srcMsgId else null,
+                                it.externalSourceToken.takeIf { _ -> it.hasExternalSourceToken() }?.toByteArray()
                             )
                         }
 
@@ -112,9 +111,6 @@ sealed interface ReplicaMessage {
         val tableData: Map<String, ByteArray>,
         val dbOp: DbOp? = null,
         val externalSourceToken: ExternalSourceToken? = null,
-        // Set when this tx came from the source log (then equal to its source-log msgId);
-        // null for ext-source txs whose `txId` is an independent counter.
-        val srcMsgId: MessageId? = null,
     ) : ProtobufMessage() {
         override fun toLogMessage() = replicaLogMessage {
             resolvedTx = resolvedTx {
@@ -138,7 +134,6 @@ sealed interface ReplicaMessage {
                     null -> {}
                 }
                 this@ResolvedTx.externalSourceToken?.let { externalSourceToken = ByteString.copyFrom(it) }
-                this@ResolvedTx.srcMsgId?.let { srcMsgId = it }
             }
         }
     }

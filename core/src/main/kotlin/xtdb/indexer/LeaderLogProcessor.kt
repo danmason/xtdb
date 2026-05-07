@@ -168,7 +168,6 @@ class LeaderLogProcessor(
                 } else null
 
                 val resolvedTx = indexer.addTxRow(txKey, error)
-                    .copy(srcMsgId = msgId)
                     .let { if (error == null) it.copy(dbOp = DbOp.Attach(msg.dbName, msg.config)) else it }
 
                 appendToReplica(resolvedTx)
@@ -192,7 +191,6 @@ class LeaderLogProcessor(
                 } else null
 
                 val resolvedTx = indexer.addTxRow(txKey, error)
-                    .copy(srcMsgId = msgId)
                     .let { if (error == null) it.copy(dbOp = DbOp.Detach(msg.dbName)) else it }
 
                 appendToReplica(resolvedTx)
@@ -230,7 +228,7 @@ class LeaderLogProcessor(
         val txKey = TransactionKey(resolvedTx.txId, resolvedTx.systemTime)
         val txResult = if (resolvedTx.committed) Committed(txKey) else Aborted(txKey, resolvedTx.error)
 
-        appendToReplica(resolvedTx.copy(srcMsgId = srcMsgId))
+        appendToReplica(resolvedTx)
         liveIndex.importTx(resolvedTx)
 
         val effectiveSrcMsgId = srcMsgId?.also { latestSourceMsgId = it } ?: latestSourceMsgId
