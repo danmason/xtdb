@@ -133,7 +133,11 @@ class PgWireDriver(
                         var rowCount = 0
                         handle.createQuery("SELECT * FROM \"$schema\".\"$table\"")
                             .setFetchSize(SNAPSHOT_BATCH_SIZE)
-                            .map { rs, _ -> columns.associate { col -> col.name to rs.getObject(col.name) } }
+                            .map { rs, _ ->
+                                columns.associate { col ->
+                                    col.name to rs.getString(col.name)?.let { coerceText(it, col.typeOid) }
+                                }
+                            }
                             .iterator().use { iter ->
                                 iter.asSequence()
                                     .chunked(SNAPSHOT_BATCH_SIZE)
