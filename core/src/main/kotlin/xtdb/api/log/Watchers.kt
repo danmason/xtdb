@@ -7,14 +7,25 @@ import xtdb.database.ExternalSourceToken
 
 class Watchers(latestTxId: TxId, latestSourceMsgId: MessageId, externalSourceToken: ExternalSourceToken? = null) {
 
-    private sealed interface State
+    private sealed interface State {
+        val latestSourceMsgId: MessageId
+        val latestTxId: TxId
+        val externalSourceToken: ExternalSourceToken?
+    }
 
     private data class Active(
-        val latestSourceMsgId: MessageId, val latestTxId: TxId, val latestTxResult: TransactionResult?,
-        val externalSourceToken: ExternalSourceToken? = null,
+        override val latestSourceMsgId: MessageId,
+        override val latestTxId: TxId,
+        val latestTxResult: TransactionResult?,
+        override val externalSourceToken: ExternalSourceToken? = null,
     ) : State
 
-    private data class Failed(val exception: IngestionStoppedException) : State
+    private data class Failed(
+        override val latestSourceMsgId: MessageId,
+        override val latestTxId: TxId,
+        override val externalSourceToken: ExternalSourceToken?,
+        val exception: IngestionStoppedException,
+    ) : State
 
     private val state = MutableStateFlow<State>(Active(latestSourceMsgId, latestTxId, null, externalSourceToken))
 
@@ -34,8 +45,8 @@ class Watchers(latestTxId: TxId, latestSourceMsgId: MessageId, externalSourceTok
         }
     }
 
-    val latestSourceMsgId get() = state.value.activeOrThrow().latestSourceMsgId
-    val externalSourceToken: ExternalSourceToken? get() = state.value.activeOrThrow().externalSourceToken
+    val latestSourceMsgId: MessageId get() = state.value.latestSourceMsgId
+    val externalSourceToken: ExternalSourceToken? get() = state.value.externalSourceToken
 
     val exception
         get() = when (val v = state.value) {
@@ -70,7 +81,12 @@ class Watchers(latestTxId: TxId, latestSourceMsgId: MessageId, externalSourceTok
 
     fun notifyError(exception: Throwable) {
         state.updateIfActive {
-            Failed(exception as? IngestionStoppedException ?: IngestionStoppedException(null, exception))
+            Failed(
+                latestSourceMsgId = it.latestSourceMsgId,
+                latestTxId = it.latestTxId,
+                externalSourceToken = it.externalSourceToken,
+                exception = exception as? IngestionStoppedException ?: IngestionStoppedException(null, exception),
+            )
         }
     }
 
