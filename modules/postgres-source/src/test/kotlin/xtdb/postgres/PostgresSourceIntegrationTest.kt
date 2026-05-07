@@ -12,7 +12,14 @@ import org.testcontainers.lifecycle.Startables
 import org.testcontainers.postgresql.PostgreSQLContainer
 import xtdb.api.Xtdb
 import xtdb.api.log.KafkaCluster
+import xtdb.time.Interval
+import java.math.BigDecimal
 import java.sql.DriverManager
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.LocalTime
+import java.time.ZoneOffset
+import java.time.ZonedDateTime
 import java.util.UUID
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -355,6 +362,135 @@ class PostgresSourceIntegrationTest {
                 xtQueryDb(node, "cdc", "SELECT _id FROM public.pg_cdc_users WHERE _id = 2").isEmpty()
             }
         }
+    }
+
+    @Test
+    fun `pg types ingest correctly across snapshot and streaming`() = runTest(timeout = 120.seconds) {
+        val pubName = "test_pub_${UUID.randomUUID().toString().replace("-", "_")}"
+        val sourceTopic = "test-topic-${UUID.randomUUID()}"
+
+        pgExecute(
+            """CREATE TABLE IF NOT EXISTS pg_types (
+                  _id INT PRIMARY KEY,
+                  span INTERVAL,
+                  dt DATE,
+                  tm TIME,
+                  ts TIMESTAMP,
+                  tstz TIMESTAMPTZ,
+                  meta JSONB,
+                  uid UUID,
+                  amount NUMERIC,
+                  enabled BOOLEAN,
+                  note TEXT
+               )""",
+            """INSERT INTO pg_types VALUES (
+                  1,
+                  INTERVAL '1 year 2 months 3 days 4 hours 5 minutes 6.789 seconds',
+                  DATE '2024-03-15',
+                  TIME '12:34:56.789',
+                  TIMESTAMP '2024-03-15 12:34:56.789',
+                  TIMESTAMPTZ '2024-03-15 12:34:56.789+02',
+                  '{"foo": "bar", "n": 42}'::JSONB,
+                  '11111111-2222-3333-4444-555555555555'::UUID,
+                  123.456,
+                  TRUE,
+                  'snapshot row'
+               )""",
+            "CREATE PUBLICATION $pubName FOR TABLE pg_types",
+        )
+
+        openNode(sourceTopic).use { node ->
+            attachPostgresSource(node, publicationName = pubName)
+
+            val cols = "span, dt, tm, ts, tstz, meta, uid, amount, enabled, note"
+
+            awaitCondition("snapshot row ingested", timeout = 30.seconds) {
+                runCatching {
+                    xtQueryDb(node, "cdc", "SELECT _id FROM public.pg_types WHERE _id = 1").isNotEmpty()
+                }.getOrDefault(false)
+            }
+            val snap = xtQueryDb(node, "cdc", "SELECT $cols FROM public.pg_types WHERE _id = 1").single()
+            assertTypedRow(
+                snap,
+                expectedSpan = Interval(14, 3, 4L * 3_600_000_000_000L + 5L * 60_000_000_000L + 6_789_000_000L),
+                expectedDate = LocalDate.of(2024, 3, 15),
+                expectedTime = LocalTime.of(12, 34, 56, 789_000_000),
+                expectedTs = LocalDateTime.of(2024, 3, 15, 12, 34, 56, 789_000_000),
+                expectedTstzInstant = ZonedDateTime.of(2024, 3, 15, 12, 34, 56, 789_000_000, ZoneOffset.ofHours(2)).toInstant(),
+                expectedMetaFoo = "bar",
+                expectedUid = UUID.fromString("11111111-2222-3333-4444-555555555555"),
+                expectedAmount = BigDecimal("123.456"),
+                expectedEnabled =true,
+                expectedNote = "snapshot row",
+            )
+
+            // Streaming path
+            pgExecute(
+                """INSERT INTO pg_types VALUES (
+                      2,
+                      INTERVAL '-1 day 30 minutes',
+                      DATE '2025-01-31',
+                      TIME '00:00:01',
+                      TIMESTAMP '2025-01-31 23:59:58',
+                      TIMESTAMPTZ '2025-01-31 23:59:58-05',
+                      '{"foo": "qux"}'::JSONB,
+                      '22222222-3333-4444-5555-666666666666'::UUID,
+                      -0.001,
+                      FALSE,
+                      'streamed row'
+                   )"""
+            )
+
+            awaitCondition("streaming row ingested", timeout = 30.seconds) {
+                xtQueryDb(node, "cdc", "SELECT _id FROM public.pg_types WHERE _id = 2").isNotEmpty()
+            }
+            val streamed = xtQueryDb(node, "cdc", "SELECT $cols FROM public.pg_types WHERE _id = 2").single()
+            assertTypedRow(
+                streamed,
+                expectedSpan = Interval(0, -1, 30L * 60_000_000_000L),
+                expectedDate = LocalDate.of(2025, 1, 31),
+                expectedTime = LocalTime.of(0, 0, 1),
+                expectedTs = LocalDateTime.of(2025, 1, 31, 23, 59, 58),
+                expectedTstzInstant = ZonedDateTime.of(2025, 1, 31, 23, 59, 58, 0, ZoneOffset.ofHours(-5)).toInstant(),
+                expectedMetaFoo = "qux",
+                expectedUid = UUID.fromString("22222222-3333-4444-5555-666666666666"),
+                expectedAmount = BigDecimal("-0.001"),
+                expectedEnabled =false,
+                expectedNote = "streamed row",
+            )
+        }
+    }
+
+    private fun assertTypedRow(
+        row: Map<String, Any?>,
+        expectedSpan: Interval,
+        expectedDate: LocalDate,
+        expectedTime: LocalTime,
+        expectedTs: LocalDateTime,
+        expectedTstzInstant: java.time.Instant,
+        expectedMetaFoo: String,
+        expectedUid: UUID,
+        expectedAmount: BigDecimal,
+        expectedEnabled: Boolean,
+        expectedNote: String,
+    ) {
+        // assertAll runs every check and reports all failures together,
+        // rather than stopping at the first.
+        Assertions.assertAll(
+            { assertEquals(expectedSpan, row["span"]) },
+            { assertEquals(expectedDate, row["dt"]) },
+            { assertEquals(expectedTime, row["tm"]) },
+            { assertEquals(expectedTs, row["ts"]) },
+            { assertEquals(expectedTstzInstant, (row["tstz"] as ZonedDateTime).toInstant()) },
+            {
+                @Suppress("UNCHECKED_CAST") val meta = row["meta"] as Map<String, Any?>
+                assertEquals(expectedMetaFoo, meta["foo"])
+            },
+            { assertEquals(expectedUid, row["uid"]) },
+            { assertEquals(0, expectedAmount.compareTo(row["amount"] as BigDecimal)) },
+            { assertEquals(expectedEnabled, row["enabled"]) },
+            { assertEquals(expectedNote, row["note"]) },
+        )
     }
 
     @Test
