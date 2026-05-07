@@ -10,6 +10,7 @@ import org.postgresql.PGProperty
 import org.postgresql.replication.LogSequenceNumber
 import org.postgresql.replication.PGReplicationStream
 import org.postgresql.util.PSQLException
+import xtdb.pgwire.PgType
 import xtdb.util.debug
 import xtdb.util.info
 import xtdb.util.logger
@@ -33,6 +34,14 @@ private const val MAX_EMPTY_HOT_POLLS = 5
 // Must stay below pgjdbc's status interval (default 10s) or the server
 // times the slot out for missing keepalives.
 private val IDLE_POLL_PAUSE = 50.milliseconds
+
+/**
+ * Coerces a pgoutput text-format column value to a JVM type via [PgType] —
+ * the same OID dispatch pgwire uses for client input. Unknown OIDs fall back
+ * to the raw string.
+ */
+private fun coerceText(text: String, typeOid: Int): Any? =
+    PgType.fromOid(typeOid)?.readText(text.toByteArray()) ?: text
 
 class PgWireDriver(
     private val dbName: String,
@@ -337,7 +346,7 @@ class PgWireDriver(
                                 }
                             )
 
-                        is PgOutputMessage.ColumnValue.Text -> PgTypeCoercion.coerce(colValue.value, col.typeOid)
+                        is PgOutputMessage.ColumnValue.Text -> coerceText(colValue.value, col.typeOid)
                     }
                 }
             }
