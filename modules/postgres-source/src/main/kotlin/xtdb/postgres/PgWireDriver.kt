@@ -121,6 +121,9 @@ class PgWireDriver(
                     LOG.debug { "[$dbName] SET TRANSACTION SNAPSHOT '$snapshotName'" }
                     handle.execute("SET TRANSACTION SNAPSHOT '$snapshotName'")
 
+                    // PgType.PgInterval.readText is ISO-8601 only.
+                    handle.execute("SET LOCAL IntervalStyle = 'iso_8601'")
+
                     val tables = handle.discoverTables()
                     LOG.info("[$dbName] Discovered ${tables.size} tables in publication '$publicationName': ${tables.joinToString { "${it.first}.${it.second}" }}")
 
@@ -197,6 +200,9 @@ class PgWireDriver(
         LOG.debug { "[$dbName] Opening replication connection for streaming" }
         val replConn = openReplicationConnection()
         val pgReplConn = replConn.unwrap(PGConnection::class.java)
+
+        // pgoutput inherits the WAL sender's IntervalStyle; must be set before start().
+        replConn.createStatement().use { it.execute("SET IntervalStyle = 'iso_8601'") }
 
         LOG.info("[$dbName] Starting replication stream from LSN ${LogSequenceNumber.valueOf(startLsn)} on slot '$slotName'")
 
