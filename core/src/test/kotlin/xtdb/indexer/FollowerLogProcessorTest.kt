@@ -48,7 +48,7 @@ class FollowerLogProcessorTest {
         tableCatalog = mockk(relaxed = true)
         trieCatalog = mockk(relaxed = true)
         dbState = DatabaseState("test", blockCatalog, tableCatalog, trieCatalog, liveIndex)
-        watchers = Watchers(-1)
+        watchers = Watchers(latestTxId = -1, latestSourceMsgId = -1)
 
         every { bufferPool.epoch } returns 1
     }
@@ -85,7 +85,7 @@ class FollowerLogProcessorTest {
     @Test
     fun `ResolvedTx skips already-applied transactions`() = runTest {
         every { liveIndex.latestCompletedTx } returns txKeyAt(42)
-        watchers = Watchers(42)
+        watchers = Watchers(latestTxId = 42, latestSourceMsgId = 42)
         val proc = makeProcessor(afterSourceMsgId = 42)
 
         val tx40 = ReplicaMessage.ResolvedTx(40, Instant.now(), true, null, emptyMap(), srcMsgId = 40)
@@ -110,7 +110,7 @@ class FollowerLogProcessorTest {
         blockCatalog = BlockCatalog("test", startBlock)
         dbState = DatabaseState("test", blockCatalog, tableCatalog, trieCatalog, liveIndex)
         every { liveIndex.latestCompletedTx } returns txKeyAt(1000)
-        watchers = Watchers(1000)
+        watchers = Watchers(latestTxId = 1000, latestSourceMsgId = 1000)
         val proc = makeProcessor(afterSourceMsgId = 1000)
 
         val staleRecords = listOf(
@@ -158,7 +158,7 @@ class FollowerLogProcessorTest {
     @Test
     fun `processes messages after skipping stale ones`() = runTest {
         every { liveIndex.latestCompletedTx } returns txKeyAt(1000)
-        watchers = Watchers(1000)
+        watchers = Watchers(latestTxId = 1000, latestSourceMsgId = 1000)
         val proc = makeProcessor(afterSourceMsgId = 1000)
 
         val tx1001 = ReplicaMessage.ResolvedTx(1001, Instant.now(), true, null, emptyMap(), srcMsgId = 1001)

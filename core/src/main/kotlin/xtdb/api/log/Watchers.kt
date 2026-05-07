@@ -7,11 +7,6 @@ import xtdb.database.ExternalSourceToken
 
 class Watchers(latestTxId: TxId, latestSourceMsgId: MessageId, externalSourceToken: ExternalSourceToken? = null) {
 
-    /**
-     * Backward-compat constructor for setups where tx-id is always a src msg-id.
-     */
-    constructor(latestSourceMsgId: MessageId) : this(latestSourceMsgId, latestSourceMsgId)
-
     private sealed interface State
 
     private data class Active(

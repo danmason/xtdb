@@ -91,7 +91,7 @@ class ExternalSourceTest {
         sourceLog: InMemoryLog<SourceMessage> = InMemoryLog(InstantSource.system(), 0),
         replicaLog: InMemoryLog<ReplicaMessage> = InMemoryLog(InstantSource.system(), 0),
         liveIndex: LiveIndex = this.liveIndex,
-        watchers: Watchers = Watchers(-1),
+        watchers: Watchers = Watchers(latestTxId = -1, latestSourceMsgId = -1),
         extSource: ExternalSource = InMemoryExternalSource(),
         afterToken: ExternalSourceToken? = null,
         ctx: CoroutineContext,
@@ -196,7 +196,7 @@ class ExternalSourceTest {
 
     @Test
     fun `indexTx threads resumeToken to watchers`() = runTest {
-        val watchers = Watchers(-1)
+        val watchers = Watchers(latestTxId = -1, latestSourceMsgId = -1)
         val extSource = InMemoryExternalSource()
         val lp = leaderProc(watchers = watchers, extSource = extSource, ctx = coroutineContext)
 
@@ -216,7 +216,7 @@ class ExternalSourceTest {
 
     @Test
     fun `error in external source propagates to watchers`() = runTest {
-        val watchers = Watchers(-1)
+        val watchers = Watchers(latestTxId = -1, latestSourceMsgId = -1)
 
         val failingSource = object : ExternalSource {
             override suspend fun onPartitionAssigned(
@@ -238,7 +238,7 @@ class ExternalSourceTest {
 
     @Test
     fun `fault in the commit pipeline tips watchers into Failed`() = runTest {
-        val watchers = Watchers(-1)
+        val watchers = Watchers(latestTxId = -1, latestSourceMsgId = -1)
         val liveIndex = mockk<LiveIndex>(relaxed = true) {
             every { importTx(any()) } throws RuntimeException("commit pipeline fault")
         }
@@ -267,7 +267,7 @@ class ExternalSourceTest {
             storage = DatabaseStorage(null, null, null, null),
             queryState = DatabaseState("cdc", null, null, null, null),
             isIndexing = false,
-            watchers = Watchers(-1),
+            watchers = Watchers(latestTxId = -1, latestSourceMsgId = -1),
             meterRegistry = null,
         )
 

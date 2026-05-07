@@ -115,7 +115,7 @@ class LogProcessorTest {
         val dbState = dbState()
         val dbStorage = DatabaseStorage(sourceLog, replicaLog, bufferPool, null)
         val blockUploader = BlockUploader(dbStorage, dbState, mockk(relaxed = true), null, null)
-        val watchers = Watchers(-1)
+        val watchers = Watchers(latestTxId = -1, latestSourceMsgId = -1)
 
         val scope = CoroutineScope(SupervisorJob())
         val logProc = LogProcessor(
@@ -139,7 +139,7 @@ class LogProcessorTest {
         val dbState = dbState()
         val dbStorage = DatabaseStorage(sourceLog, replicaLog, bufferPool, null)
         val blockUploader = BlockUploader(dbStorage, dbState, mockk(relaxed = true), null, null)
-        val watchers = Watchers(-1)
+        val watchers = Watchers(latestTxId = -1, latestSourceMsgId = -1)
 
         val scope = CoroutineScope(SupervisorJob())
         val logProc = LogProcessor(
@@ -166,7 +166,7 @@ class LogProcessorTest {
         val dbState = dbState(liveIndex = liveIndex)
         val dbStorage = DatabaseStorage(sourceLog, replicaLog, bufferPool, null)
         val blockUploader = BlockUploader(dbStorage, dbState, mockk(relaxed = true), null, null)
-        val watchers = Watchers(-1)
+        val watchers = Watchers(latestTxId = -1, latestSourceMsgId = -1)
 
         // Pre-populate the replica log with a transaction
         val replicaProducer = replicaLog.openAtomicProducer("setup")
@@ -203,7 +203,7 @@ class LogProcessorTest {
         val dbState = dbState(liveIndex = liveIndex)
         val dbStorage = DatabaseStorage(sourceLog, replicaLog, bufferPool, null)
         val blockUploader = BlockUploader(dbStorage, dbState, mockk(relaxed = true), null, null)
-        val watchers = Watchers(-1)
+        val watchers = Watchers(latestTxId = -1, latestSourceMsgId = -1)
 
         // Pre-populate the replica log
         replicaLog.appendMessage(ReplicaMessage.ResolvedTx(1, java.time.Instant.now(), true, null, emptyMap()))

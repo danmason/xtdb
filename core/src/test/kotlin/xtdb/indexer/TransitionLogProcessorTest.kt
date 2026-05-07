@@ -41,7 +41,7 @@ class TransitionLogProcessorTest {
         tableCatalog = mockk(relaxed = true)
         trieCatalog = mockk(relaxed = true)
         dbState = DatabaseState("test", blockCatalog, tableCatalog, trieCatalog, liveIndex)
-        watchers = Watchers(-1)
+        watchers = Watchers(latestTxId = -1, latestSourceMsgId = -1)
 
         every { bufferPool.epoch } returns 1
     }

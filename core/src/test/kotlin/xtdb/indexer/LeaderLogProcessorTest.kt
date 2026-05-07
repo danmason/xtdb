@@ -62,7 +62,7 @@ class LeaderLogProcessorTest {
         blockCatalog: BlockCatalog = BlockCatalog("test", null),
         trieCatalog: TrieCatalog = mockk(relaxed = true),
         compactor: Compactor.ForDatabase = mockk(relaxed = true),
-        watchers: Watchers = Watchers(-1),
+        watchers: Watchers = Watchers(latestTxId = -1, latestSourceMsgId = -1),
     ): LeaderLogProcessor {
         val tableCatalog = mockk<TableCatalog>(relaxed = true)
         val dbState = DatabaseState("test", blockCatalog, tableCatalog, trieCatalog, liveIndex)
@@ -127,7 +127,7 @@ class LeaderLogProcessorTest {
 
         val lp = LeaderLogProcessor(
             allocator, nodeBase, dbStorage, mockk(relaxed = true), mockk(relaxed = true),
-            dbState, blockUploader, Watchers(-1),
+            dbState, blockUploader, Watchers(latestTxId = -1, latestSourceMsgId = -1),
             extSource = null, replicaProducer = replicaProducer,
             skipTxs = emptySet(), dbCatalog = null,
             partition = 0, afterSourceMsgId = -1, afterReplicaMsgId = -1, afterToken = null,
@@ -193,7 +193,7 @@ class LeaderLogProcessorTest {
 
         val lp = LeaderLogProcessor(
             allocator, nodeBase, dbStorage, mockk(relaxed = true), mockk(relaxed = true),
-            dbState, blockUploader, Watchers(-1),
+            dbState, blockUploader, Watchers(latestTxId = -1, latestSourceMsgId = -1),
             extSource = null, replicaProducer = replicaProducer,
             skipTxs = emptySet(), dbCatalog = null,
             partition = 0, afterSourceMsgId = -1, afterReplicaMsgId = -1, afterToken = null,

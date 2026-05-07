@@ -16,7 +16,7 @@ class WatchersTest {
 
     @Test
     fun `test awaitTx ready already`() = runTest(timeout = 1.seconds) {
-        val watchers = Watchers(3)
+        val watchers = Watchers(latestTxId = 3, latestSourceMsgId = 3)
         val job = async { watchers.awaitTx(2) }
         while (!job.isCompleted) yield()
         assertNull(job.await())
@@ -24,13 +24,13 @@ class WatchersTest {
 
     @Test
     fun `test awaitTx waits`() = runTest(timeout = 1.seconds) {
-        val watchers = Watchers(3)
+        val watchers = Watchers(latestTxId = 3, latestSourceMsgId = 3)
         assertThrows<TimeoutCancellationException> { withTimeout(500) { watchers.awaitTx(4) } }
     }
 
     @Test
     fun `notifyTx resumes tx watchers`() = runTest(timeout = 1.seconds) {
-        val watchers = Watchers(3)
+        val watchers = Watchers(latestTxId = 3, latestSourceMsgId = 3)
         val await5 = async { watchers.awaitTx(5) }
         val await4 = async { watchers.awaitTx(4) }
 
@@ -69,7 +69,7 @@ class WatchersTest {
     @Test
     fun `handles ingestion stopped`() = runTest(timeout = 1.seconds) {
         supervisorScope {
-            val watchers = Watchers(3)
+            val watchers = Watchers(latestTxId = 3, latestSourceMsgId = 3)
             val awaitTx = async { watchers.awaitTx(4) }
             val awaitSource = async { watchers.awaitSource(4) }
 
