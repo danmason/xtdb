@@ -112,7 +112,7 @@ class ExternalSourceTest {
             allocator, nodeBase, dbStorage, indexer, crashLogger,
             dbState, blockUploader, watchers, extSource, replicaProducer,
             skipTxs = emptySet(), dbCatalog = null,
-            partition = 0, afterSourceMsgId = -1, afterReplicaMsgId = -1, afterToken = afterToken, ctx = ctx
+            partition = 0, afterReplicaMsgId = -1, afterToken = afterToken, ctx = ctx
         )
     }
 

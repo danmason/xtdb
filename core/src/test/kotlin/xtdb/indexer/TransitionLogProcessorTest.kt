@@ -50,11 +50,11 @@ class TransitionLogProcessorTest {
         allocator.close()
     }
 
-    private fun makeProcessor(afterSourceMsgId: Long = -1L) =
+    private fun makeProcessor() =
         TransitionLogProcessor(
             allocator, bufferPool, dbState, liveIndex,
             blockUploader, replicaProducer,
-            watchers, null, afterSourceMsgId, afterReplicaMsgId = -1L
+            watchers, null, afterReplicaMsgId = -1L
         )
 
     private fun <M> record(offset: Long, message: M) =

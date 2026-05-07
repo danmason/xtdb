@@ -192,16 +192,14 @@ class Database(
                 val procFactory = object : LogProcessor.ProcessorFactory {
                     override fun openFollower(
                         pendingBlock: PendingBlock?,
-                        afterSourceMsgId: MessageId,
                         afterReplicaMsgId: MessageId,
                     ) = FollowerLogProcessor(
                         allocator, storage.bufferPool, state, compactorForDb,
-                        watchers, dbCatalog, pendingBlock, afterSourceMsgId, afterReplicaMsgId
+                        watchers, dbCatalog, pendingBlock, afterReplicaMsgId
                     )
 
                     override fun openLeaderSystem(
                         replicaProducer: Log.AtomicProducer<ReplicaMessage>,
-                        afterSourceMsgId: MessageId,
                         afterReplicaMsgId: MessageId,
                     ): LogProcessor.LeaderSystem {
                         val extSource = dbConfig.externalSource?.open(dbName, base.remotes)
@@ -214,7 +212,6 @@ class Database(
                             skipTxs = indexerConfig.skipTxs.toSet(),
                             dbCatalog = dbCatalog,
                             partition = 0,
-                            afterSourceMsgId = afterSourceMsgId,
                             afterReplicaMsgId = afterReplicaMsgId,
                             // watchers has the latest token from replica log replay,
                             // which may be ahead of blockCatalog if no block boundary was flushed.
@@ -230,13 +227,12 @@ class Database(
 
                     override fun openTransition(
                         replicaProducer: Log.AtomicProducer<ReplicaMessage>,
-                        afterSourceMsgId: MessageId,
                         afterReplicaMsgId: MessageId,
                     ) = TransitionLogProcessor(
                         allocator, storage.bufferPool, state, state.liveIndex,
                         blockUploader, replicaProducer,
                         watchers, dbCatalog,
-                        afterSourceMsgId, afterReplicaMsgId
+                        afterReplicaMsgId
                     )
                 }
 

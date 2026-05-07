@@ -29,12 +29,8 @@ class TransitionLogProcessor(
     private val replicaProducer: Log.AtomicProducer<ReplicaMessage>,
     private val watchers: Watchers,
     private val dbCatalog: Database.Catalog?,
-    afterSourceMsgId: MessageId,
     afterReplicaMsgId: MessageId,
 ) : LogProcessor.TransitionProcessor {
-
-    override var latestSourceMsgId: MessageId = afterSourceMsgId
-        private set
 
     override var latestReplicaMsgId: MessageId = afterReplicaMsgId
         private set
@@ -47,8 +43,8 @@ class TransitionLogProcessor(
 
     private val ReplicaMessage.stale get() =
         when (this) {
-            is ReplicaMessage.ResolvedTx -> txId <= latestSourceMsgId
-            is ReplicaMessage.TriesAdded -> sourceMsgId <= latestSourceMsgId
+            is ReplicaMessage.ResolvedTx -> txId <= watchers.latestSourceMsgId
+            is ReplicaMessage.TriesAdded -> sourceMsgId <= watchers.latestSourceMsgId
             is ReplicaMessage.BlockBoundary -> blockIndex <= (blockCatalog.currentBlockIndex ?: -1)
             is ReplicaMessage.BlockUploaded -> blockIndex <= (blockCatalog.currentBlockIndex ?: -1)
             is ReplicaMessage.NoOp -> false
@@ -88,7 +84,6 @@ class TransitionLogProcessor(
                     if (msg.committed) TransactionResult.Committed(txKey)
                     else TransactionResult.Aborted(txKey, msg.error)
 
-                latestSourceMsgId = msg.txId
                 watchers.notifyTx(result, msg.txId, msg.externalSourceToken)
             }
 
@@ -102,21 +97,18 @@ class TransitionLogProcessor(
                         )
                     }
                 }
-                latestSourceMsgId = msg.sourceMsgId
                 watchers.notifyMsg(msg.sourceMsgId)
             }
 
             is ReplicaMessage.BlockBoundary -> {
                 LOG.debug("[$dbName] block boundary b${msg.blockIndex.asLexHex}: source=${msg.latestProcessedMsgId}, replica=$msgId")
                 blockUploader.uploadBlock(replicaProducer, msgId, msg)
-                latestSourceMsgId = msg.latestProcessedMsgId
                 watchers.notifyMsg(msg.latestProcessedMsgId)
             }
 
             // previously I errored here, but we need to just ignore them -
             // the transition proc submits a BlockUploaded as part of finishing the BlockBoundary messages.
             is ReplicaMessage.BlockUploaded -> {
-                latestSourceMsgId = msg.latestProcessedMsgId
                 watchers.notifyMsg(msg.latestProcessedMsgId)
             }
 

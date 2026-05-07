@@ -33,15 +33,11 @@ class FollowerLogProcessor @JvmOverloads constructor(
     private val watchers: Watchers,
     private val dbCatalog: Database.Catalog?,
     pendingBlock: PendingBlock?,
-    afterSourceMsgId: MessageId,
     afterReplicaMsgId: MessageId,
     private val maxBufferedRecords: Int = 1024,
 ) : LogProcessor.FollowerProcessor {
 
     override var pendingBlock: PendingBlock? = pendingBlock
-        private set
-
-    override var latestSourceMsgId: MessageId = afterSourceMsgId
         private set
 
     private sealed interface ReplicaState {
@@ -77,8 +73,8 @@ class FollowerLogProcessor @JvmOverloads constructor(
 
     private val ReplicaMessage.stale get() =
         when (this) {
-            is ReplicaMessage.ResolvedTx -> txId <= latestSourceMsgId
-            is ReplicaMessage.TriesAdded -> sourceMsgId <= latestSourceMsgId
+            is ReplicaMessage.ResolvedTx -> txId <= watchers.latestSourceMsgId
+            is ReplicaMessage.TriesAdded -> sourceMsgId <= watchers.latestSourceMsgId
             is ReplicaMessage.BlockBoundary -> blockIndex <= (blockCatalog.currentBlockIndex ?: -1)
             is ReplicaMessage.BlockUploaded -> blockIndex <= (blockCatalog.currentBlockIndex ?: -1)
             is ReplicaMessage.NoOp -> false
@@ -117,7 +113,6 @@ class FollowerLogProcessor @JvmOverloads constructor(
                     if (msg.committed) TransactionResult.Committed(txKey)
                     else TransactionResult.Aborted(txKey, msg.error)
 
-                latestSourceMsgId = msg.txId
                 watchers.notifyTx(result, msg.txId, msg.externalSourceToken)
             }
 
@@ -125,14 +120,12 @@ class FollowerLogProcessor @JvmOverloads constructor(
                 if (msg.storageVersion == Storage.VERSION && msg.storageEpoch == bufferPool.epoch)
                     addTries(msg.tries, record.logTimestamp)
 
-                latestSourceMsgId = msg.sourceMsgId
                 watchers.notifyMsg(msg.sourceMsgId)
             }
 
             is ReplicaMessage.BlockBoundary -> {
                 pendingBlock = PendingBlock(record.msgId, msg, maxBufferedRecords)
                 LOG.debug("[$dbName] block boundary b${msg.blockIndex.asLexHex}: source=${msg.latestProcessedMsgId}, replica=${record.msgId} — waiting for BlockUploaded...")
-                latestSourceMsgId = msg.latestProcessedMsgId
                 watchers.notifyMsg(msg.latestProcessedMsgId)
             }
 

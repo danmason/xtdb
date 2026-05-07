@@ -56,10 +56,10 @@ class FollowerLogProcessorTest {
         allocator.close()
     }
 
-    private fun makeProcessor(afterSourceMsgId: Long = -1L, maxBufferedRecords: Int = 1024) =
+    private fun makeProcessor(maxBufferedRecords: Int = 1024) =
         FollowerLogProcessor(
             allocator, bufferPool, dbState,
-            compactor, watchers, null, null, afterSourceMsgId = afterSourceMsgId, afterReplicaMsgId = -1L, maxBufferedRecords
+            compactor, watchers, null, null, afterReplicaMsgId = -1L, maxBufferedRecords
         )
 
     private fun <M> record(offset: Long, message: M) =
@@ -83,7 +83,7 @@ class FollowerLogProcessorTest {
     @Test
     fun `ResolvedTx skips already-applied transactions`() = runTest {
         watchers = Watchers(latestTxId = 42, latestSourceMsgId = 42)
-        val proc = makeProcessor(afterSourceMsgId = 42)
+        val proc = makeProcessor()
 
         val tx40 = ReplicaMessage.ResolvedTx(40, Instant.now(), true, null, emptyMap())
         val tx42 = ReplicaMessage.ResolvedTx(42, Instant.now(), true, null, emptyMap())
@@ -107,7 +107,7 @@ class FollowerLogProcessorTest {
         blockCatalog = BlockCatalog("test", startBlock)
         dbState = DatabaseState("test", blockCatalog, tableCatalog, trieCatalog, liveIndex)
         watchers = Watchers(latestTxId = 1000, latestSourceMsgId = 1000)
-        val proc = makeProcessor(afterSourceMsgId = 1000)
+        val proc = makeProcessor()
 
         val staleRecords = listOf(
             record(0, ReplicaMessage.ResolvedTx(500, Instant.now(), true, null, emptyMap())),
@@ -121,7 +121,7 @@ class FollowerLogProcessorTest {
         proc.processRecords(staleRecords)
 
         verify(exactly = 0) { liveIndex.importTx(any()) }
-        assert(proc.latestSourceMsgId == 1000L) { "latestSourceMsgId should not have changed" }
+        assert(watchers.latestSourceMsgId == 1000L) { "latestSourceMsgId should not have changed" }
 
         proc.close()
     }
@@ -154,7 +154,7 @@ class FollowerLogProcessorTest {
     @Test
     fun `processes messages after skipping stale ones`() = runTest {
         watchers = Watchers(latestTxId = 1000, latestSourceMsgId = 1000)
-        val proc = makeProcessor(afterSourceMsgId = 1000)
+        val proc = makeProcessor()
 
         val tx1001 = ReplicaMessage.ResolvedTx(1001, Instant.now(), true, null, emptyMap())
 
@@ -166,7 +166,7 @@ class FollowerLogProcessorTest {
         ))
 
         verify { liveIndex.importTx(tx1001) }
-        assert(proc.latestSourceMsgId == 1001L)
+        assert(watchers.latestSourceMsgId == 1001L)
 
         proc.close()
     }

@@ -29,7 +29,6 @@ class LogProcessor(
 ) : Log.SubscriptionListener<SourceMessage>, AutoCloseable {
 
     interface Processor<M> : Log.RecordProcessor<M>, AutoCloseable {
-        val latestSourceMsgId: MessageId
         val latestReplicaMsgId: MessageId
     }
 
@@ -50,19 +49,16 @@ class LogProcessor(
     interface ProcessorFactory {
         fun openLeaderSystem(
             replicaProducer: Log.AtomicProducer<ReplicaMessage>,
-            afterSourceMsgId: MessageId,
             afterReplicaMsgId: MessageId,
         ): LeaderSystem
 
         fun openTransition(
             replicaProducer: Log.AtomicProducer<ReplicaMessage>,
-            afterSourceMsgId: MessageId,
             afterReplicaMsgId: MessageId,
         ): TransitionProcessor
 
         fun openFollower(
             pendingBlock: PendingBlock?,
-            afterSourceMsgId: MessageId,
             afterReplicaMsgId: MessageId,
         ): FollowerProcessor
     }
@@ -81,16 +77,15 @@ class LogProcessor(
     }
 
     private fun openFollowerSystem(
-        latestSourceMsgId: MessageId,
         latestReplicaMsgId: MessageId,
         pendingBlock: PendingBlock? = null,
     ): FollowerSystem =
-        procFactory.openFollower(pendingBlock, latestSourceMsgId, latestReplicaMsgId).closeOnCatch { proc ->
+        procFactory.openFollower(pendingBlock, latestReplicaMsgId).closeOnCatch { proc ->
             LOG.info {
                 buildString {
                     append("[$dbName] starting follower: ")
                     append("pending block: ${pendingBlock != null}, ")
-                    append("src: $latestSourceMsgId, ")
+                    append("src: ${watchers.latestSourceMsgId}, ")
                     append("replica: $latestReplicaMsgId")
                 }
             }
@@ -100,7 +95,7 @@ class LogProcessor(
 
     @Volatile
     private var sys: SubSystem =
-        dbState.blockCatalog.let { openFollowerSystem(it.latestProcessedMsgId ?: -1, it.boundaryReplicaMsgId ?: -1) }
+        openFollowerSystem(dbState.blockCatalog.boundaryReplicaMsgId ?: -1)
 
     init {
         meterRegistry?.let { reg ->
@@ -138,11 +133,7 @@ class LogProcessor(
 
                         val pendingBlock = followerProc.pendingBlock
 
-                        procFactory.openTransition(
-                            replicaProducer,
-                            followerProc.latestSourceMsgId,
-                            followerProc.latestReplicaMsgId
-                        )
+                        procFactory.openTransition(replicaProducer, followerProc.latestReplicaMsgId)
                             .use { transition ->
                                 if (pendingBlock != null) {
                                     LOG.debug("[$dbName] transition: finishing pending block b${pendingBlock.blockIdx} with ${pendingBlock.bufferedRecords.size} buffered records")
@@ -153,14 +144,14 @@ class LogProcessor(
                                     transition.processRecords(pendingBlock.bufferedRecords)
                                 }
 
-                                val latestSourceMsgId = transition.latestSourceMsgId
                                 LOG.debug("[$dbName] transition: opening leader processor")
 
-                                val sys = procFactory.openLeaderSystem(replicaProducer, latestSourceMsgId, replayTarget)
+                                val sys = procFactory.openLeaderSystem(replicaProducer, replayTarget)
                                 this.sys = sys
 
-                                LOG.info("[$dbName] leader startup complete, resuming after $latestSourceMsgId")
-                                Log.TailSpec(latestSourceMsgId, sys.proc)
+                                val resumeMsgId = watchers.latestSourceMsgId
+                                LOG.info("[$dbName] leader startup complete, resuming after $resumeMsgId")
+                                Log.TailSpec(resumeMsgId, sys.proc)
                             }
                     }
                 } catch (e: InterruptedException) {
@@ -186,7 +177,7 @@ class LogProcessor(
                 // and close() only releases the allocator — watermark fields remain readable.
                 oldSys.close()
                 val proc = oldSys.proc
-                this.sys = openFollowerSystem(proc.latestSourceMsgId, proc.latestReplicaMsgId, proc.pendingBlock)
+                this.sys = openFollowerSystem(proc.latestReplicaMsgId, proc.pendingBlock)
             }
 
             is FollowerSystem -> {

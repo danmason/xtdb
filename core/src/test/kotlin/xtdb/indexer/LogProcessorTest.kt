@@ -63,7 +63,6 @@ class LogProcessorTest {
         object : LogProcessor.ProcessorFactory {
             override fun openLeaderSystem(
                 replicaProducer: Log.AtomicProducer<ReplicaMessage>,
-                afterSourceMsgId: MessageId,
                 afterReplicaMsgId: MessageId,
             ): LogProcessor.LeaderSystem {
                 val compactor = mockk<Compactor.ForDatabase>(relaxed = true)
@@ -73,7 +72,7 @@ class LogProcessorTest {
                     dbState, blockUploader, watchers,
                     extSource = null, replicaProducer = replicaProducer,
                     skipTxs = emptySet(), dbCatalog = null,
-                    partition = 0, afterSourceMsgId = afterSourceMsgId, afterReplicaMsgId = afterReplicaMsgId,
+                    partition = 0, afterReplicaMsgId = afterReplicaMsgId,
                     afterToken = null,
                 )
                 return object : LogProcessor.LeaderSystem {
@@ -84,26 +83,23 @@ class LogProcessorTest {
 
             override fun openTransition(
                 replicaProducer: Log.AtomicProducer<ReplicaMessage>,
-                afterSourceMsgId: MessageId,
                 afterReplicaMsgId: MessageId,
             ): LogProcessor.TransitionProcessor =
                 TransitionLogProcessor(
                     allocator, bufferPool, dbState, dbState.liveIndex,
                     BlockUploader(dbStorage, dbState, mockk(relaxed = true), null, null),
                     replicaProducer, watchers, dbCatalog = null,
-                    afterSourceMsgId = afterSourceMsgId,
                     afterReplicaMsgId = afterReplicaMsgId,
                 )
 
             override fun openFollower(
                 pendingBlock: PendingBlock?,
-                afterSourceMsgId: MessageId,
                 afterReplicaMsgId: MessageId,
             ): LogProcessor.FollowerProcessor =
                 FollowerLogProcessor(
                     allocator, bufferPool, dbState,
                     mockk(relaxed = true), watchers, null, pendingBlock,
-                    afterSourceMsgId, afterReplicaMsgId,
+                    afterReplicaMsgId,
                 )
         }
 

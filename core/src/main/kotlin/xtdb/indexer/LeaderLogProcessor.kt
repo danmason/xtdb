@@ -51,7 +51,6 @@ class LeaderLogProcessor(
     private val skipTxs: Set<MessageId>,
     private val dbCatalog: Database.Catalog?,
     partition: Int,
-    afterSourceMsgId: MessageId,
     afterReplicaMsgId: MessageId,
     afterToken: ExternalSourceToken?,
     private val instantSource: InstantSource = InstantSource.system(),
@@ -91,9 +90,6 @@ class LeaderLogProcessor(
     }
 
     override var pendingBlock: PendingBlock? = null
-        private set
-
-    override var latestSourceMsgId: MessageId = afterSourceMsgId
         private set
 
     override var latestReplicaMsgId: MessageId = afterReplicaMsgId
@@ -151,7 +147,6 @@ class LeaderLogProcessor(
                 if (expectedBlockIdx != null && expectedBlockIdx == (blockCatalog.currentBlockIndex ?: -1L)) {
                     finishBlock(msgId, watchers.externalSourceToken)
                 }
-                latestSourceMsgId = msgId
                 watchers.notifyMsg(msgId)
             }
 
@@ -174,7 +169,6 @@ class LeaderLogProcessor(
                 liveIndex.importTx(resolvedTx)
 
                 val result = if (error == null) Committed(txKey) else Aborted(txKey, error)
-                latestSourceMsgId = msgId
                 watchers.notifyTx(result, msgId, null)
             }
 
@@ -197,7 +191,6 @@ class LeaderLogProcessor(
                 liveIndex.importTx(resolvedTx)
 
                 val result = if (error == null) Committed(txKey) else Aborted(txKey, error)
-                latestSourceMsgId = msgId
                 watchers.notifyTx(result, msgId, null)
             }
 
@@ -210,13 +203,11 @@ class LeaderLogProcessor(
 
                 appendToReplica(TriesAdded(msg.storageVersion, msg.storageEpoch, msg.tries, sourceMsgId = msgId))
 
-                latestSourceMsgId = msgId
                 watchers.notifyMsg(msgId)
             }
 
             // TODO this one's going after 2.2
             is SourceMessage.BlockUploaded -> {
-                latestSourceMsgId = msgId
                 watchers.notifyMsg(msgId)
             }
         }
@@ -231,7 +222,7 @@ class LeaderLogProcessor(
         appendToReplica(resolvedTx)
         liveIndex.importTx(resolvedTx)
 
-        val effectiveSrcMsgId = srcMsgId?.also { latestSourceMsgId = it } ?: latestSourceMsgId
+        val effectiveSrcMsgId = srcMsgId ?: watchers.latestSourceMsgId
         watchers.notifyTx(txResult, effectiveSrcMsgId, resolvedTx.externalSourceToken)
 
         if (liveIndex.isFull())

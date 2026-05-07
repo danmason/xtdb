@@ -155,7 +155,6 @@ class LogProcessorSimTest : SimulationTestBase() {
 
         override fun openLeaderSystem(
             replicaProducer: Log.AtomicProducer<ReplicaMessage>,
-            afterSourceMsgId: MessageId,
             afterReplicaMsgId: MessageId,
         ): LogProcessor.LeaderSystem {
             val proc = LeaderLogProcessor(
@@ -163,7 +162,7 @@ class LogProcessorSimTest : SimulationTestBase() {
                 dbState, blockUploader, watchers,
                 extSource = null, replicaProducer = replicaProducer,
                 skipTxs = emptySet(), dbCatalog = null,
-                partition = 0, afterSourceMsgId = afterSourceMsgId, afterReplicaMsgId = afterReplicaMsgId,
+                partition = 0, afterReplicaMsgId = afterReplicaMsgId,
                 afterToken = null,
                 ctx = dispatcher
             )
@@ -175,26 +174,24 @@ class LogProcessorSimTest : SimulationTestBase() {
 
         override fun openTransition(
             replicaProducer: Log.AtomicProducer<ReplicaMessage>,
-            afterSourceMsgId: MessageId,
             afterReplicaMsgId: MessageId,
         ): LogProcessor.TransitionProcessor =
             TransitionLogProcessor(
                 allocator, bp, dbState, liveIndex,
                 blockUploader,
                 replicaProducer, watchers, null,
-                afterSourceMsgId, afterReplicaMsgId
+                afterReplicaMsgId
             )
 
         override fun openFollower(
             pendingBlock: PendingBlock?,
-            afterSourceMsgId: MessageId,
             afterReplicaMsgId: MessageId,
         ): LogProcessor.FollowerProcessor =
             FollowerLogProcessor(
                 allocator, bp, dbState,
                 mockk<Compactor.ForDatabase>(relaxed = true),
                 watchers, null, pendingBlock,
-                afterSourceMsgId, afterReplicaMsgId
+                afterReplicaMsgId
             )
 
         fun openLogProcessor(scope: CoroutineScope) =
