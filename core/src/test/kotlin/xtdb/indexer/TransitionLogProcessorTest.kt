@@ -3,6 +3,7 @@ package xtdb.indexer
 import io.mockk.*
 import org.apache.arrow.memory.RootAllocator
 import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.BeforeEach
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -66,11 +67,31 @@ class TransitionLogProcessorTest {
 
         val txId = 100L
         proc.processRecords(listOf(
-            record(0, ReplicaMessage.ResolvedTx(txId, Instant.now(), true, null, emptyMap())),
+            record(0, ReplicaMessage.ResolvedTx(txId, Instant.now(), true, null, emptyMap(), srcMsgId = txId)),
             record(1, ReplicaMessage.BlockBoundary(0, txId)),
         ))
 
         coVerify { blockUploader.uploadBlock(replicaProducer, 1, any()) }
+
+        proc.close()
+    }
+
+    @Test
+    fun `ext-source ResolvedTx does not advance latestSourceMsgId`() = runTest {
+        // Companion to the FollowerLogProcessorTest case: the transition path must also keep
+        // ext-source txs from bumping latestSourceMsgId, so the subsequent BlockBoundary's
+        // latestProcessedMsgId (= leader's still-default -1) doesn't violate the Watchers invariant.
+        val proc = makeProcessor()
+
+        val extTx = ReplicaMessage.ResolvedTx(0, Instant.now(), true, null, emptyMap(), srcMsgId = null)
+        proc.processRecords(listOf(
+            record(0, extTx),
+            record(1, ReplicaMessage.BlockBoundary(0, -1)),
+        ))
+
+        verify { liveIndex.importTx(extTx) }
+        assertEquals(-1L, watchers.latestSourceMsgId,
+            "ext-source ResolvedTx must not bump latestSourceMsgId")
 
         proc.close()
     }

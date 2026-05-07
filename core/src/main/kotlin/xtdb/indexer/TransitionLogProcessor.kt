@@ -43,7 +43,7 @@ class TransitionLogProcessor(
 
     private val ReplicaMessage.stale get() =
         when (this) {
-            is ReplicaMessage.ResolvedTx -> txId <= watchers.latestSourceMsgId
+            is ReplicaMessage.ResolvedTx -> txId <= watchers.latestTxId
             is ReplicaMessage.TriesAdded -> sourceMsgId <= watchers.latestSourceMsgId
             is ReplicaMessage.BlockBoundary -> blockIndex <= (blockCatalog.currentBlockIndex ?: -1)
             is ReplicaMessage.BlockUploaded -> blockIndex <= (blockCatalog.currentBlockIndex ?: -1)
@@ -55,10 +55,7 @@ class TransitionLogProcessor(
         val msgId = record.msgId
         when (val msg = record.message) {
             is ReplicaMessage.ResolvedTx -> {
-                val latestTxId = liveIndex.latestCompletedTx?.txId
-                if (latestTxId == null || msg.txId > latestTxId) {
-                    liveIndex.importTx(msg)
-                }
+                liveIndex.importTx(msg)
                 val txKey = TransactionKey(msg.txId, msg.systemTime)
                 if (msg.committed) {
                     when (val dbOp = msg.dbOp) {
@@ -84,7 +81,8 @@ class TransitionLogProcessor(
                     if (msg.committed) TransactionResult.Committed(txKey)
                     else TransactionResult.Aborted(txKey, msg.error)
 
-                watchers.notifyTx(result, msg.txId, msg.externalSourceToken)
+                val effectiveSrcMsgId = msg.srcMsgId ?: watchers.latestSourceMsgId
+                watchers.notifyTx(result, effectiveSrcMsgId, msg.externalSourceToken)
             }
 
             is ReplicaMessage.TriesAdded -> {

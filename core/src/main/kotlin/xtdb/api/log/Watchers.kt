@@ -46,6 +46,7 @@ class Watchers(latestTxId: TxId, latestSourceMsgId: MessageId, externalSourceTok
     }
 
     val latestSourceMsgId: MessageId get() = state.value.latestSourceMsgId
+    val latestTxId: TxId get() = state.value.latestTxId
     val externalSourceToken: ExternalSourceToken? get() = state.value.externalSourceToken
 
     val exception

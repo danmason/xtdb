@@ -50,6 +50,23 @@ class WatchersTest {
     }
 
     @Test
+    fun `seeded latestTxId can lag latestSourceMsgId`() = runTest(timeout = 1.seconds) {
+        // Production shape from #5580: ext-source databases persist `latestProcessedMsgId` via
+        // the block catalog (a source-msg-id watermark) and `latestCompletedTx` separately (a
+        // tx-id watermark). On restart the source watermark is generally ahead of the tx
+        // watermark. Watchers must accept an incoming ResolvedTx whose txId == seedTxId+1 even
+        // though srcMsgId is well below it; pre-fix, Database.open seeded `latestTxId` from
+        // `sourceMsgId` and the next ResolvedTx tripped the `txId > latestTxId` invariant.
+        val watchers = Watchers(latestTxId = 5, latestSourceMsgId = 100)
+
+        val tx6 = TransactionResult.Committed(TransactionKey(6, Instant.parse("2026-05-01T00:00:00Z")))
+        // ext-source path: srcMsgId stays at the prior latestSourceMsgId.
+        watchers.notifyTx(tx6, watchers.latestSourceMsgId, null)
+
+        assertEquals(tx6, watchers.awaitTx(6))
+    }
+
+    @Test
     fun `notifyMsg advances specified watermarks`() = runTest(timeout = 1.seconds) {
         val watchers = Watchers(latestTxId = -1, latestSourceMsgId = -1)
 

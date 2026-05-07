@@ -171,7 +171,15 @@ class Database(
                 blockCatalog.latestProcessedMsgId ?: -1,
                 offsetToMsgId(storage.sourceLog.epoch, -1)
             )
-            val watchers = Watchers(sourceMsgId, sourceMsgId, blockCatalog.externalSourceToken)
+            // tx-id and source-msg-id can diverge under ext-source — seed them independently:
+            // tx-id from the live-index's last committed tx, source-msg-id from the persisted
+            // block-catalog watermark (or the source-log epoch floor on a fresh epoch).
+            val txId = state.liveIndex.latestCompletedTx?.txId ?: -1L
+            val watchers = Watchers(
+                latestTxId = txId,
+                latestSourceMsgId = sourceMsgId,
+                externalSourceToken = blockCatalog.externalSourceToken,
+            )
 
             val crashLogger = CrashLogger(allocator, storage.bufferPool, base.config.nodeId)
 

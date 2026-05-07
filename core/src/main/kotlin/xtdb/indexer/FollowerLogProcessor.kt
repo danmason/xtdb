@@ -73,7 +73,7 @@ class FollowerLogProcessor @JvmOverloads constructor(
 
     private val ReplicaMessage.stale get() =
         when (this) {
-            is ReplicaMessage.ResolvedTx -> txId <= watchers.latestSourceMsgId
+            is ReplicaMessage.ResolvedTx -> txId <= watchers.latestTxId
             is ReplicaMessage.TriesAdded -> sourceMsgId <= watchers.latestSourceMsgId
             is ReplicaMessage.BlockBoundary -> blockIndex <= (blockCatalog.currentBlockIndex ?: -1)
             is ReplicaMessage.BlockUploaded -> blockIndex <= (blockCatalog.currentBlockIndex ?: -1)
@@ -113,7 +113,8 @@ class FollowerLogProcessor @JvmOverloads constructor(
                     if (msg.committed) TransactionResult.Committed(txKey)
                     else TransactionResult.Aborted(txKey, msg.error)
 
-                watchers.notifyTx(result, msg.txId, msg.externalSourceToken)
+                val effectiveSrcMsgId = msg.srcMsgId ?: watchers.latestSourceMsgId
+                watchers.notifyTx(result, effectiveSrcMsgId, msg.externalSourceToken)
             }
 
             is ReplicaMessage.TriesAdded -> {
