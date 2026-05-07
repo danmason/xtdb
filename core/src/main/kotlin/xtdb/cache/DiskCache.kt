@@ -98,12 +98,17 @@ class DiskCache internal constructor(val rootPath: Path, val maxSizeBytes: Long)
 
             if (diskCachePath.exists())
                 completedFuture(Entry(k, diskCachePath))
-            else
-                fetch(k, createTempPath())
-                    .thenApply { tmpPath ->
+            else {
+                val tmpPath = createTempPath()
+                fetch(k, tmpPath)
+                    .thenApply {
                         tmpPath.moveTo(diskCachePath.createParentDirectories(), ATOMIC_MOVE, REPLACE_EXISTING)
                         Entry(k, diskCachePath)
                     }
+                    .whenComplete { _, ex ->
+                        if (ex != null) tmpPath.deleteIfExists()
+                    }
+            }
         }
 
     @Suppress("NAME_SHADOWING")
