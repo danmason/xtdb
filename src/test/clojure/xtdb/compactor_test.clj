@@ -1,5 +1,6 @@
 (ns xtdb.compactor-test
   (:require [clojure.java.io :as io]
+            [clojure.set :as set]
             [clojure.string :as str]
             [clojure.test :as t]
             [xtdb.api :as xt]
@@ -17,7 +18,8 @@
             [xtdb.trie :as trie]
             [xtdb.trie-catalog :as cat]
             [xtdb.util :as util])
-  (:import (java.time Duration)
+  (:import (java.nio.file Files Path)
+           (java.time Duration)
            [xtdb.block.proto TableBlock]
            (xtdb.compactor RecencyPartition)
            xtdb.segment.BufferPoolSegment
@@ -544,3 +546,38 @@
                (xt/q node "SELECT *, _valid_from, _valid_to, _system_from, _system_to
                            FROM docs FOR ALL VALID_TIME FOR ALL SYSTEM_TIME
                            ORDER BY _system_from, _valid_from"))))))
+
+(defn- list-children [^Path dir]
+  (when (Files/isDirectory dir (into-array java.nio.file.LinkOption []))
+    (with-open [s (Files/list dir)]
+      (vec (.toList s)))))
+
+(defn- compactor-tmp-dirs []
+  (let [tmp-root (-> (System/getProperty "java.io.tmpdir") util/->path)]
+    (->> (list-children tmp-root)
+         (filter #(.startsWith (str (.getFileName ^Path %)) "compactor"))
+         (into #{}))))
+
+(t/deftest test-compactor-does-not-leak-tmp-merge-dirs
+  ;; Bug: Compactor.executeJob uses .useAll on the SegmentMerge.Results, which
+  ;; only closes each Result (deleting the per-recency .arrow files) but skips
+  ;; Results.close() — so the merged-segments-{random}/ parent directory leaks
+  ;; under the compactor's tempDir for every L0->L1 (partitioned) job, until
+  ;; driver close eventually does tempDir.deleteRecursively().
+  (let [baseline (compactor-tmp-dirs)
+        node-dir (util/->path "target/compactor/test-tmp-merge-leak")]
+    (util/delete-dir node-dir)
+
+    (binding [c/*ignore-signal-block?* true]
+      (util/with-open [node (tu/->local-node {:node-dir node-dir, :rows-per-block 4})]
+        (xt/submit-tx node [[:put-docs :foo {:xt/id 1} {:xt/id 2} {:xt/id 3} {:xt/id 4}]])
+        (xt-log/sync-node node #xt/duration "PT5S")
+        (c/compact-all! node (Duration/ofSeconds 5))
+
+        (let [new-tmp-dirs (set/difference (compactor-tmp-dirs) baseline)
+              leftovers (mapcat (fn [^Path tmp-dir]
+                                  (->> (list-children tmp-dir)
+                                       (filter #(.startsWith (str (.getFileName ^Path %)) "merged-segments"))))
+                                new-tmp-dirs)]
+          (t/is (empty? leftovers)
+                (str "compactor leaked merged-segments-* entries under " new-tmp-dirs ": " leftovers)))))))

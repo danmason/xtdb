@@ -107,7 +107,7 @@ interface Compactor : AutoCloseable {
 
                                     val addedTries =
                                         segMerge.mergeSegments(segs, job.part, recencyPartitioning, recencyPartition)
-                                            .useAll { mergeRes ->
+                                            .use { mergeRes ->
                                                 mergeRes.map {
                                                     it.openForRead().use { mergeReadCh ->
                                                         Relation.loader(al, mergeReadCh).use { loader ->
