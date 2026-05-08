@@ -3,6 +3,7 @@
             [clojure.test :as t]
             [xtdb.api :as xt]
             [xtdb.arrow-edn-test :as aet]
+            [xtdb.db-catalog :as db]
             [xtdb.log :as log]
             [xtdb.node :as xtn]
             [xtdb.serde :as serde]
@@ -10,8 +11,10 @@
             [xtdb.time :as time]
             [xtdb.tx-ops :as tx-ops]
             [xtdb.util :as util])
-  (:import [java.time Instant]
-           [xtdb.api.log Log]
+  (:import [java.time Duration Instant InstantSource]
+           xtdb.api.Xtdb$Config
+           [xtdb.api.log InMemoryLog IngestionStoppedException Log Log$Factory ReadOnlyLog
+                         ReplicaMessage$ResolvedTx SourceMessage$DetachDatabase]
            xtdb.arrow.Relation
            [xtdb.util MsgIdUtil]))
 
@@ -362,3 +365,76 @@
 
         (t/testing "shouldn't have flushed another block / re-read the flush block"
           (t/is (= ["l00-rc-b00.arrow"] (tu/read-files-from-bp-path node "tables/public$docs/meta/"))))))))
+
+;; Direct demonstration of the cause: a ResolvedTx whose src_msg_id field is absent
+;; on the wire (pre-f3eb8d7d9 record OR new-format ext-source — wire-indistinguishable)
+;; advances latestTxId but leaves latestSourceMsgId at the seed.
+;;
+;; Read-only mode prevents the source-log subscription from opening
+;; (Database.kt:251), so no Kafka rebalance, no leader transition. The follower still
+;; tails the replica log though — replay happens, gap forms, we observe it.
+(t/deftest no-srcmsgid-replay-leaves-watcher-gap-5586
+  (let [source-log (InMemoryLog. (InstantSource/system) 0)
+        replica-log (InMemoryLog. (InstantSource/system) 0)
+        log-factory (reify Log$Factory
+                      (openSourceLog [_ _] source-log)
+                      (openReadOnlySourceLog [_ _] (ReadOnlyLog. source-log))
+                      (openReplicaLog [_ _] replica-log)
+                      (openReadOnlyReplicaLog [_ _] (ReadOnlyLog. replica-log))
+                      (writeTo [_ _]))]
+
+    (.appendMessageBlocking replica-log
+                            (ReplicaMessage$ResolvedTx. 0 (Instant/now)
+                                                        true nil {} nil nil nil))
+
+    (with-open [node (xtn/start-node (doto (Xtdb$Config.)
+                                       (.log log-factory)
+                                       (.readOnlyDatabases true)))]
+      (let [primary (.databaseOrNull (db/<-node node) "xtdb")]
+        ;; await replay — latestTxId reaches 0 once the follower processes our record
+        (.awaitTxBlocking primary 0 (Duration/ofSeconds 5))
+
+        (let [watchers (.getWatchers primary)]
+          (t/is (= 0 (.getLatestTxId watchers))
+                "replay processed the ResolvedTx, advancing latestTxId")
+          (t/is (= -1 (.getLatestSourceMsgId watchers))
+                "but latestSourceMsgId stayed at the seed — this is the gap"))))))
+
+;; End-to-end shape: the gap above propagates into a leader transition, where the
+;; source-log delivers a msgId the indexer maps to a txId already in latestTxId.
+;; Watchers trips on the duplicate via the `txId > latestTxId` invariant.
+
+(t/deftest no-srcmsgid-replay-trips-leader-5586
+  (let [source-log (InMemoryLog. (InstantSource/system) 0)
+        replica-log (InMemoryLog. (InstantSource/system) 0)
+        ;; Custom Log.Factory returning our pre-existing instances rather than fresh
+        ;; ones — that's how we sneak the crafted records into the node's startup view.
+        log-factory (reify Log$Factory
+                      (openSourceLog [_ _] source-log)
+                      (openReadOnlySourceLog [_ _] (ReadOnlyLog. source-log))
+                      (openReplicaLog [_ _] replica-log)
+                      (openReadOnlyReplicaLog [_ _] (ReadOnlyLog. replica-log))
+                      (writeTo [_ _]))]
+
+    ;; Pre-populate the replica log: ResolvedTx with srcMsgId left null. The encoder
+    ;; (ReplicaMessage.kt:141 — `srcMsgId?.let { srcMsgId = it }`) elides the tag,
+    ;; producing byte-for-byte the wire shape of a pre-PR record.
+    (.appendMessageBlocking replica-log
+                            (ReplicaMessage$ResolvedTx. 0 (Instant/now)
+                                                        true nil {} nil nil nil))
+
+    ;; Pre-populate the source log: DetachDatabase("missing-db") at offset 0 → msgId 0,
+    ;; colliding with the replica's txId. DetachDatabase exercises the same notifyTx
+    ;; path as a regular Tx without needing an arrow-encoded payload (the missing db
+    ;; makes dbCatalog.detach throw Anomaly.Caller, which the handler catches before
+    ;; reaching notifyTx with srcMsgId=0).
+    (.appendMessageBlocking source-log (SourceMessage$DetachDatabase. "missing-db"))
+
+    (with-open [node (xtn/start-node (doto (Xtdb$Config.) (.log log-factory)))]
+      (let [primary (.databaseOrNull (db/<-node node) "xtdb")]
+        ;; awaitSource(1) will never resolve cleanly — the leader trips on msgId 0,
+        ;; Watchers transitions to Failed via notifyError, the await surfaces it.
+        ;; IngestionStoppedException's message is "Ingestion stopped (msgId: …): <cause>"
+        (t/is (thrown-with-msg? IngestionStoppedException
+                                #"txId 0 <= latestTxId 0"
+                                (.awaitSourceBlocking primary 1 (Duration/ofSeconds 5))))))))
