@@ -95,3 +95,20 @@ tracer:
 ```
 
 For more information on viewing and analyzing traces with Grafana, see the ["Monitoring XTDB with Grafana"](../guides/monitoring-with-grafana#distributed-tracing-with-tempo) guide.
+
+## Query CPU profiling (v2.2+)
+
+For ad-hoc CPU profiling of a single query, XTDB exposes a SQL `PROFILE` statement that wraps the query in an [async-profiler](https://github.com/async-profiler/async-profiler) sampling recording.
+The recording covers only the cursor consumption of that one query — other concurrent work on the node is not profiled.
+
+Run a query under the profiler:
+
+```sql
+PROFILE SELECT SUM(x) AS s FROM generate_series(1, 1000000) AS g(x);
+```
+
+The result is a single row with one column, `path`, e.g. `profiles/dde1e3b8-…​.html`.
+The flamegraph HTML is written to the queried database's object store under that path; fetch it from the store and open it in a browser to view the flamegraph.
+
+The profiler attaches a JVMTI agent at node startup, so it is always available — no extra configuration is required.
+Sampling adds overhead to the wrapped query, so use `PROFILE` for investigation rather than as a default.
