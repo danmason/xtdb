@@ -206,7 +206,8 @@ class LogProcessorSimTest : SimulationTestBase() {
                 allocator, bp, dbState, liveIndex,
                 blockUploader,
                 replicaProducer, watchers, null,
-                afterReplicaMsgId
+                afterReplicaMsgId,
+                hasExternalSource = false,
             )
 
         override fun openFollower(
@@ -217,7 +218,8 @@ class LogProcessorSimTest : SimulationTestBase() {
                 allocator, bp, dbState,
                 mockk<Compactor.ForDatabase>(relaxed = true),
                 watchers, null, pendingBlock,
-                afterReplicaMsgId
+                afterReplicaMsgId,
+                hasExternalSource = false,
             )
 
         fun openLogProcessor(scope: CoroutineScope) =

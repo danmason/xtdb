@@ -34,6 +34,7 @@ class FollowerLogProcessor @JvmOverloads constructor(
     private val dbCatalog: Database.Catalog?,
     pendingBlock: PendingBlock?,
     afterReplicaMsgId: MessageId,
+    private val hasExternalSource: Boolean,
     private val maxBufferedRecords: Int = 1024,
 ) : LogProcessor.FollowerProcessor {
 
@@ -113,7 +114,9 @@ class FollowerLogProcessor @JvmOverloads constructor(
                     if (msg.committed) TransactionResult.Committed(txKey)
                     else TransactionResult.Aborted(txKey, msg.error)
 
-                val effectiveSrcMsgId = msg.srcMsgId ?: watchers.latestSourceMsgId
+                // Handling for pre-`f3eb8d7d9` ResolvedTx records — see #5586.
+                val effectiveSrcMsgId = msg.srcMsgId
+                    ?: if (hasExternalSource) watchers.latestSourceMsgId else msg.txId
                 watchers.notifyTx(result, effectiveSrcMsgId, msg.externalSourceToken)
             }
 

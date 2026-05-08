@@ -196,6 +196,7 @@ class Database(
 
             if (indexerConfig.enabled) {
                 val blockUploader = BlockUploader(storage, state, compactorForDb, dbCatalog, base.meterRegistry)
+                val hasExternalSource = dbConfig.externalSource != null
 
                 val procFactory = object : LogProcessor.ProcessorFactory {
                     override fun openFollower(
@@ -203,7 +204,8 @@ class Database(
                         afterReplicaMsgId: MessageId,
                     ) = FollowerLogProcessor(
                         allocator, storage.bufferPool, state, compactorForDb,
-                        watchers, dbCatalog, pendingBlock, afterReplicaMsgId
+                        watchers, dbCatalog, pendingBlock, afterReplicaMsgId,
+                        hasExternalSource = hasExternalSource,
                     )
 
                     override fun openLeaderSystem(
@@ -240,7 +242,8 @@ class Database(
                         allocator, storage.bufferPool, state, state.liveIndex,
                         blockUploader, replicaProducer,
                         watchers, dbCatalog,
-                        afterReplicaMsgId
+                        afterReplicaMsgId,
+                        hasExternalSource = hasExternalSource,
                     )
                 }
 

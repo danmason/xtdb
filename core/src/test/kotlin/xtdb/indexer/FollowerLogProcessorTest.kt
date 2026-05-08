@@ -58,10 +58,15 @@ class FollowerLogProcessorTest {
         allocator.close()
     }
 
-    private fun makeProcessor(maxBufferedRecords: Int = 1024) =
+    private fun makeProcessor(
+        maxBufferedRecords: Int = 1024,
+        hasExternalSource: Boolean = false,
+    ) =
         FollowerLogProcessor(
             allocator, bufferPool, dbState,
-            compactor, watchers, null, null, afterReplicaMsgId = -1L, maxBufferedRecords
+            compactor, watchers, null, null, afterReplicaMsgId = -1L,
+            hasExternalSource = hasExternalSource,
+            maxBufferedRecords = maxBufferedRecords,
         )
 
     private fun <M> record(offset: Long, message: M) =
@@ -178,7 +183,7 @@ class FollowerLogProcessorTest {
         // Reproduces #5580: an ext-source ResolvedTx (srcMsgId=null) followed by a BlockBoundary
         // whose latestProcessedMsgId reflects the leader's still-default source watermark would
         // previously violate `srcMsgId >= latestSourceMsgId` on the follower.
-        val proc = makeProcessor()
+        val proc = makeProcessor(hasExternalSource = true)
 
         val blockProto = block { blockIndex = 0 }.toByteArray()
         every { bufferPool.getByteArray(BlockCatalog.blockFilePath(0)) } returns blockProto
@@ -200,7 +205,7 @@ class FollowerLogProcessorTest {
 
     @Test
     fun `mixed ext-source and source-log ResolvedTxs advance the right watermarks`() = runTest {
-        val proc = makeProcessor()
+        val proc = makeProcessor(hasExternalSource = true)
 
         val ext0 = ReplicaMessage.ResolvedTx(0, Instant.now(), true, null, emptyMap(), srcMsgId = null)
         val src1 = ReplicaMessage.ResolvedTx(1, Instant.now(), true, null, emptyMap(), srcMsgId = 1)

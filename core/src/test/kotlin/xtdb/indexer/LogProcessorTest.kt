@@ -90,6 +90,7 @@ class LogProcessorTest {
                     BlockUploader(dbStorage, dbState, mockk(relaxed = true), null, null),
                     replicaProducer, watchers, dbCatalog = null,
                     afterReplicaMsgId = afterReplicaMsgId,
+                    hasExternalSource = false,
                 )
 
             override fun openFollower(
@@ -100,6 +101,7 @@ class LogProcessorTest {
                     allocator, bufferPool, dbState,
                     mockk(relaxed = true), watchers, null, pendingBlock,
                     afterReplicaMsgId,
+                    hasExternalSource = false,
                 )
         }
 

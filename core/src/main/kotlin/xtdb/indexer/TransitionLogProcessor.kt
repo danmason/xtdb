@@ -30,6 +30,7 @@ class TransitionLogProcessor(
     private val watchers: Watchers,
     private val dbCatalog: Database.Catalog?,
     afterReplicaMsgId: MessageId,
+    private val hasExternalSource: Boolean,
 ) : LogProcessor.TransitionProcessor {
 
     override var latestReplicaMsgId: MessageId = afterReplicaMsgId
@@ -81,7 +82,9 @@ class TransitionLogProcessor(
                     if (msg.committed) TransactionResult.Committed(txKey)
                     else TransactionResult.Aborted(txKey, msg.error)
 
-                val effectiveSrcMsgId = msg.srcMsgId ?: watchers.latestSourceMsgId
+                // Handling for pre-`f3eb8d7d9` ResolvedTx records — see #5586.
+                val effectiveSrcMsgId = msg.srcMsgId
+                    ?: if (hasExternalSource) watchers.latestSourceMsgId else msg.txId
                 watchers.notifyTx(result, effectiveSrcMsgId, msg.externalSourceToken)
             }
 

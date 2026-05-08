@@ -51,11 +51,12 @@ class TransitionLogProcessorTest {
         allocator.close()
     }
 
-    private fun makeProcessor() =
+    private fun makeProcessor(hasExternalSource: Boolean = false) =
         TransitionLogProcessor(
             allocator, bufferPool, dbState, liveIndex,
             blockUploader, replicaProducer,
-            watchers, null, afterReplicaMsgId = -1L
+            watchers, null, afterReplicaMsgId = -1L,
+            hasExternalSource = hasExternalSource,
         )
 
     private fun <M> record(offset: Long, message: M) =
@@ -81,7 +82,7 @@ class TransitionLogProcessorTest {
         // Companion to the FollowerLogProcessorTest case: the transition path must also keep
         // ext-source txs from bumping latestSourceMsgId, so the subsequent BlockBoundary's
         // latestProcessedMsgId (= leader's still-default -1) doesn't violate the Watchers invariant.
-        val proc = makeProcessor()
+        val proc = makeProcessor(hasExternalSource = true)
 
         val extTx = ReplicaMessage.ResolvedTx(0, Instant.now(), true, null, emptyMap(), srcMsgId = null)
         proc.processRecords(listOf(
