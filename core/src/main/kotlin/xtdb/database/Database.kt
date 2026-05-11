@@ -206,6 +206,7 @@ class Database(
                         allocator, storage.bufferPool, state, compactorForDb,
                         watchers, dbCatalog, pendingBlock, afterReplicaMsgId,
                         hasExternalSource = hasExternalSource,
+                        meterRegistry = base.meterRegistry,
                     )
 
                     override fun openLeaderSystem(
