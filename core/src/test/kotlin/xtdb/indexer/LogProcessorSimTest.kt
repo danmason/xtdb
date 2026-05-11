@@ -103,6 +103,11 @@ class LogProcessorSimTest : SimulationTestBase() {
      */
     private inner class SimExtSource(actions: List<SimAction>) : ExternalSource {
         private val iterator = actions.iterator()
+        private val watchersList = mutableListOf<Watchers>()
+
+        fun watch(watchers: Watchers) {
+            watchersList += watchers
+        }
 
         var indexedCount = 0
             private set
@@ -110,7 +115,11 @@ class LogProcessorSimTest : SimulationTestBase() {
         var inFlight = 0
             private set
 
-        val isQuiescent: Boolean get() = !iterator.hasNext() && inFlight == 0
+        val isQuiescent: Boolean
+            get() {
+                watchersList.forEach { it.exception?.let { ex -> throw ex } }
+                return !iterator.hasNext() && inFlight == 0
+            }
 
         override suspend fun onPartitionAssigned(
             partition: Int,
@@ -168,6 +177,7 @@ class LogProcessorSimTest : SimulationTestBase() {
         val dbState = DatabaseState(dbName, blockCatalog, tableCatalog, trieCatalog, liveIndex)
 
         val watchers = Watchers(latestTxId = -1, latestSourceMsgId = -1)
+            .also { simExtSource.watch(it) }
         val dbStorage = DatabaseStorage(srcLog, replicaLog, bp, null)
         val blockUploader = BlockUploader(dbStorage, dbState, mockk(relaxed = true), null, null, uploadDispatcher = dispatcher)
         val crashLogger = CrashLogger(allocator, bp, "sim-node")
