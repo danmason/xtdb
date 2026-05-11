@@ -9,6 +9,7 @@ import xtdb.api.log.MessageId
 import xtdb.util.MsgIdUtil
 import kotlin.coroutines.coroutineContext
 import xtdb.util.debug
+import xtdb.util.error
 import xtdb.util.logger
 import java.time.Instant
 import kotlin.coroutines.CoroutineContext
@@ -81,7 +82,14 @@ internal class SimLog<M>(private val name: String, ctx: CoroutineContext, privat
             if (lag > 0) {
                 val messageCount = rand.nextInt(1, lag + 1)
                 LOG.debug("$name/processMessages: delivering $messageCount group record(s) [$nextOffset..${nextOffset + messageCount - 1}] (lag=$lag)")
-                tailSpec.processor.processRecords(topic.subList(nextOffset, nextOffset + messageCount).toList())
+                try {
+                    tailSpec.processor.processRecords(topic.subList(nextOffset, nextOffset + messageCount).toList())
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    LOG.error(e, "$name/groupConsumer: processRecords failed")
+                    throw e
+                }
                 leader.nextOffset += messageCount
             }
 
@@ -105,7 +113,14 @@ internal class SimLog<M>(private val name: String, ctx: CoroutineContext, privat
                 if (lag > 0) {
                     val messageCount = rand.nextInt(1, lag + 1)
                     LOG.debug("$name/plainConsumer: delivering $messageCount record(s) [$nextOffset..${nextOffset + messageCount - 1}] (lag=$lag)")
-                    consumer.proc.processRecords(topic.subList(nextOffset, nextOffset + messageCount).toList())
+                    try {
+                        consumer.proc.processRecords(topic.subList(nextOffset, nextOffset + messageCount).toList())
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        LOG.error(e, "$name/plainConsumer: processRecords failed")
+                        throw e
+                    }
                     consumer.nextOffset += messageCount
                 }
             }
