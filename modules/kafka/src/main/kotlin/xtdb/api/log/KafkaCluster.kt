@@ -8,6 +8,8 @@ package xtdb.api.log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.onClosed
+import kotlinx.coroutines.channels.onSuccess
 import kotlinx.coroutines.channels.trySendBlocking
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.selects.onTimeout
@@ -246,9 +248,14 @@ class KafkaCluster(
 
         private val pollingJob: Job = scope.launch {
             try {
-                while (isActive) {
+                var closed = false
+                while (!closed) {
                     select {
-                        commandCh.onReceive { processCommand(it) }
+                        commandCh.onReceiveCatching { result ->
+                            result
+                                .onSuccess { processCommand(it) }
+                                .onClosed { closed = true }
+                        }
 
                         if (subscriptions.isNotEmpty()) {
                             @OptIn(ExperimentalCoroutinesApi::class)
@@ -292,7 +299,8 @@ class KafkaCluster(
 
         override fun close() {
             consumer.wakeup()
-            pollingJob.cancel()
+            // closing commandCh is the shutdown signal; do not also cancel pollingJob —
+            // that races the select between observing closed-channel and observing cancellation
             commandCh.close()
             try {
                 runBlocking { withTimeout(30.seconds) { pollingJob.join() } }
