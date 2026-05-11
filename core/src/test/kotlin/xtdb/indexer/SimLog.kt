@@ -47,7 +47,7 @@ internal class SimLog<M>(private val name: String, ctx: CoroutineContext, privat
 
     var leader: GroupConsumer<M>? = null
 
-    val job = Job()
+    val job = Job(ctx[Job])
     private val scope = CoroutineScope(ctx + job)
 
     /**

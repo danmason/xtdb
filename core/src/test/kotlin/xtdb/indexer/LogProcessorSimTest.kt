@@ -4,6 +4,7 @@ import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
@@ -57,14 +58,10 @@ class LogProcessorSimTest : SimulationTestBase() {
     fun setUp() {
         nodeBase = openBase(openMeterRegistry = false)
         allocator = nodeBase.allocator.newChildAllocator("test", 0, Long.MAX_VALUE)
-        this.srcLog = SimLog("src", dispatcher, rand)
-        this.replicaLog = SimLog("replica", dispatcher, rand)
     }
 
     @AfterEach
     fun tearDown() {
-        replicaLog.close()
-        srcLog.close()
         allocator.close()
         nodeBase.close()
     }
@@ -333,6 +330,9 @@ class LogProcessorSimTest : SimulationTestBase() {
     @RepeatableSimulationTest
     fun `single node processes txs and flush-blocks with rebalances`(@Suppress("unused") iteration: Int) =
         runTest(timeout = 5.seconds) {
+            srcLog = SimLog("src", dispatcher + coroutineContext.job, rand)
+            replicaLog = SimLog("replica", dispatcher + coroutineContext.job, rand)
+            try {
             val rowsPerBlock = rand.nextLong(15, 25)
             val totalActions = rand.nextInt(50, 100)
             val actions = buildActions(rand, totalActions)
@@ -342,7 +342,7 @@ class LogProcessorSimTest : SimulationTestBase() {
 
             MemoryStorage(allocator, epoch = 0).use { bp ->
                 SimNode("test-db", bp, IndexerConfig(rowsPerBlock = rowsPerBlock), simExtSource).use { node ->
-                    val logProcScope = CoroutineScope(dispatcher + Job())
+                    val logProcScope = CoroutineScope(dispatcher + Job(coroutineContext.job))
                     node.openLogProcessor(logProcScope).use { logProc ->
                         val groupJob = launch(dispatcher) { srcLog.openGroupSubscription(logProc) }
 
@@ -394,11 +394,18 @@ class LogProcessorSimTest : SimulationTestBase() {
                     }
                 }
             }
+            } finally {
+                replicaLog.close()
+                srcLog.close()
+            }
         }
 
     @RepeatableSimulationTest
     fun `stable leader with sustained throughput`(@Suppress("unused") iteration: Int) =
         runTest(timeout = 5.seconds) {
+            srcLog = SimLog("src", dispatcher + coroutineContext.job, rand)
+            replicaLog = SimLog("replica", dispatcher + coroutineContext.job, rand)
+            try {
             val rowsPerBlock = rand.nextLong(15, 25)
             val indexerConfig = IndexerConfig(rowsPerBlock = rowsPerBlock)
             val totalActions = rand.nextInt(50, 100)
@@ -411,9 +418,9 @@ class LogProcessorSimTest : SimulationTestBase() {
                 SimNode("test-db", bp, indexerConfig, simExtSource).use { leader ->
                     SimNode("test-db", bp, indexerConfig, simExtSource).use { followerA ->
                         SimNode("test-db", bp, indexerConfig, simExtSource).use { followerB ->
-                            val leaderScope = CoroutineScope(dispatcher + Job())
-                            val followerScopeA = CoroutineScope(dispatcher + Job())
-                            val followerScopeB = CoroutineScope(dispatcher + Job())
+                            val leaderScope = CoroutineScope(dispatcher + Job(coroutineContext.job))
+                            val followerScopeA = CoroutineScope(dispatcher + Job(coroutineContext.job))
+                            val followerScopeB = CoroutineScope(dispatcher + Job(coroutineContext.job))
 
                             leader.openLogProcessor(leaderScope).use { leaderProc ->
                                 followerA.openLogProcessor(followerScopeA).use { followerProcA ->
@@ -504,11 +511,18 @@ class LogProcessorSimTest : SimulationTestBase() {
                     }
                 }
             }
+            } finally {
+                replicaLog.close()
+                srcLog.close()
+            }
         }
 
     @RepeatableSimulationTest
     fun `multi-node leadership changes preserve block catalog consistency`(@Suppress("unused") iteration: Int) =
         runTest(timeout = 5.seconds) {
+            srcLog = SimLog("src", dispatcher + coroutineContext.job, rand)
+            replicaLog = SimLog("replica", dispatcher + coroutineContext.job, rand)
+            try {
             val rowsPerBlock = rand.nextLong(15, 25)
             val indexerConfig = IndexerConfig(rowsPerBlock = rowsPerBlock)
             val totalActions = rand.nextInt(50, 100)
@@ -520,8 +534,8 @@ class LogProcessorSimTest : SimulationTestBase() {
             MemoryStorage(allocator, epoch = 0).use { bp ->
                 SimNode("test-db", bp, indexerConfig, simExtSource).use { nodeA ->
                     SimNode("test-db", bp, indexerConfig, simExtSource).use { nodeB ->
-                        val scopeA = CoroutineScope(dispatcher + Job())
-                        val scopeB = CoroutineScope(dispatcher + Job())
+                        val scopeA = CoroutineScope(dispatcher + Job(coroutineContext.job))
+                        val scopeB = CoroutineScope(dispatcher + Job(coroutineContext.job))
 
                         nodeA.openLogProcessor(scopeA).use { logProcA ->
                             nodeB.openLogProcessor(scopeB).use { logProcB ->
@@ -601,6 +615,10 @@ class LogProcessorSimTest : SimulationTestBase() {
                         }
                     }
                 }
+            }
+            } finally {
+                replicaLog.close()
+                srcLog.close()
             }
         }
 }
