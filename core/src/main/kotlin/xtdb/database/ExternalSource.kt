@@ -1,5 +1,6 @@
 package xtdb.database
 
+import io.micrometer.core.instrument.MeterRegistry
 import kotlinx.serialization.modules.PolymorphicModuleBuilder
 import kotlinx.serialization.modules.SerializersModule
 import kotlinx.serialization.modules.polymorphic
@@ -21,6 +22,7 @@ interface ExternalSource : AutoCloseable {
         fun open(
             dbName: String,
             remotes: Map<RemoteAlias, Remote>,
+            meterRegistry: MeterRegistry? = null,
         ): ExternalSource
 
         companion object {

@@ -1,5 +1,6 @@
 package xtdb.postgres
 
+import io.micrometer.core.instrument.MeterRegistry
 import kotlinx.coroutines.*
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -50,6 +51,7 @@ class PostgresSource(
         override fun open(
             dbName: String,
             remotes: Map<RemoteAlias, Remote>,
+            meterRegistry: MeterRegistry?,
         ): ExternalSource {
             val raw = remotes[remote]
                 ?: throw Incorrect(
