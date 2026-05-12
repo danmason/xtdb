@@ -1,5 +1,8 @@
 package xtdb.indexer
 
+import io.micrometer.core.instrument.DistributionSummary
+import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.Timer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import org.apache.arrow.memory.BufferAllocator
@@ -35,8 +38,53 @@ class FollowerLogProcessor @JvmOverloads constructor(
     pendingBlock: PendingBlock?,
     afterReplicaMsgId: MessageId,
     private val hasExternalSource: Boolean,
+    private val meterRegistry: MeterRegistry? = null,
     private val maxBufferedRecords: Int = 1024,
 ) : LogProcessor.FollowerProcessor {
+
+    private val dbName = dbState.name
+
+    private fun processTimer(msgType: String): Timer? = meterRegistry?.let {
+        Timer.builder("xtdb.replica.process.timer")
+            .description("Time spent processing replica log records, by message type")
+            .tag("db", dbName)
+            .tag("msg.type", msgType)
+            .publishPercentiles(0.75, 0.85, 0.95, 0.98, 0.99, 0.999)
+            .register(it)
+    }
+
+    private val resolvedTxTimer = processTimer("ResolvedTx")
+    private val triesAddedTimer = processTimer("TriesAdded")
+    private val blockBoundaryTimer = processTimer("BlockBoundary")
+    private val blockUploadedTimer = processTimer("BlockUploaded")
+    private val triesDeletedTimer = processTimer("TriesDeleted")
+
+    private val blockBufferTimer: Timer? = meterRegistry?.let {
+        Timer.builder("xtdb.replica.block.buffer.timer")
+            .description("Time the follower spends buffering records between BlockBoundary and BlockUploaded")
+            .tag("db", dbName)
+            .publishPercentiles(0.75, 0.85, 0.95, 0.98, 0.99, 0.999)
+            .register(it)
+    }
+
+    private val bufferedRecordsSummary: DistributionSummary? = meterRegistry?.let {
+        DistributionSummary.builder("xtdb.replica.block.buffered.records")
+            .description("Number of records buffered while a follower waits for BlockUploaded")
+            .tag("db", dbName)
+            .register(it)
+    }
+
+    private var blockBufferStartSample: Timer.Sample? = null
+
+    private inline fun <R> Timer?.timed(block: () -> R): R {
+        if (this == null) return block()
+        val sample = Timer.start(meterRegistry!!)
+        try {
+            return block()
+        } finally {
+            sample.stop(this)
+        }
+    }
 
     override var pendingBlock: PendingBlock? = pendingBlock
         private set
@@ -58,7 +106,6 @@ class FollowerLogProcessor @JvmOverloads constructor(
         is ReplicaState.Failed -> s.msgId
     }
 
-    private val dbName = dbState.name
     private val blockCatalog = dbState.blockCatalog
     private val tableCatalog = dbState.tableCatalog
     private val trieCatalog = dbState.trieCatalog
@@ -85,7 +132,7 @@ class FollowerLogProcessor @JvmOverloads constructor(
 
     private suspend fun processRecord(record: Log.Record<ReplicaMessage>) {
         when (val msg = record.message) {
-            is ReplicaMessage.ResolvedTx -> {
+            is ReplicaMessage.ResolvedTx -> resolvedTxTimer.timed {
                 liveIndex.importTx(msg)
 
                 val systemTime = msg.systemTime
@@ -120,17 +167,18 @@ class FollowerLogProcessor @JvmOverloads constructor(
                 watchers.notifyTx(result, effectiveSrcMsgId, msg.externalSourceToken)
             }
 
-            is ReplicaMessage.TriesAdded -> {
+            is ReplicaMessage.TriesAdded -> triesAddedTimer.timed {
                 if (msg.storageVersion == Storage.VERSION && msg.storageEpoch == bufferPool.epoch)
                     addTries(msg.tries, record.logTimestamp)
 
                 watchers.notifyMsg(msg.sourceMsgId)
             }
 
-            is ReplicaMessage.BlockBoundary -> {
+            is ReplicaMessage.BlockBoundary -> blockBoundaryTimer.timed {
                 pendingBlock = PendingBlock(record.msgId, msg, maxBufferedRecords)
                 LOG.debug("[$dbName] block boundary b${msg.blockIndex.asLexHex}: source=${msg.latestProcessedMsgId}, replica=${record.msgId} — waiting for BlockUploaded...")
                 watchers.notifyMsg(msg.latestProcessedMsgId)
+                blockBufferStartSample = meterRegistry?.let { Timer.start(it) }
             }
 
             is ReplicaMessage.BlockUploaded -> error(
@@ -139,7 +187,7 @@ class FollowerLogProcessor @JvmOverloads constructor(
 
             is ReplicaMessage.NoOp -> Unit
 
-            is ReplicaMessage.TriesDeleted -> {
+            is ReplicaMessage.TriesDeleted -> triesDeletedTimer.timed {
                 trieCatalog.deleteTries(TableRef.parse(dbState.name, msg.tableName), msg.trieKeys)
             }
         }
@@ -158,16 +206,22 @@ class FollowerLogProcessor @JvmOverloads constructor(
                 && msg.storageEpoch == bufferPool.epoch
             ) {
                 LOG.debug("[$dbName] block uploaded b${msg.blockIndex.asLexHex}: source=${msg.latestProcessedMsgId}, replica=${record.msgId} (${pendingBlock.bufferedRecords.size} buffered)")
-                val block = parseFrom(bufferPool.getByteArray(blockFilePath(pendingBlockIdx)))
+                val bufferedRecords = blockUploadedTimer.timed {
+                    val block = parseFrom(bufferPool.getByteArray(blockFilePath(pendingBlockIdx)))
 
-                addTries(msg.tries, record.logTimestamp)
-                blockCatalog.refresh(block)
-                tableCatalog.updateFromBlockMetadata(blockCatalog.currentBlockIndex, liveIndex.blockMetadata())
-                liveIndex.nextBlock()
-                compactor.signalBlock()
+                    addTries(msg.tries, record.logTimestamp)
+                    blockCatalog.refresh(block)
+                    tableCatalog.updateFromBlockMetadata(blockCatalog.currentBlockIndex, liveIndex.blockMetadata())
+                    liveIndex.nextBlock()
+                    compactor.signalBlock()
 
-                val bufferedRecords = pendingBlock.bufferedRecords
-                this.pendingBlock = null
+                    val bufferedRecords = pendingBlock.bufferedRecords
+                    bufferedRecordsSummary?.record(bufferedRecords.size.toDouble())
+                    blockBufferTimer?.let { blockBufferStartSample?.stop(it) }
+                    blockBufferStartSample = null
+                    this.pendingBlock = null
+                    bufferedRecords
+                }
 
                 // replay buffered records — their typed notifications advance the watermarks
                 bufferedRecords.forEach { handleRecord(it) }

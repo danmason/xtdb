@@ -1,5 +1,7 @@
 package xtdb.indexer
 
+import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import io.mockk.*
 import org.apache.arrow.memory.RootAllocator
 import org.junit.jupiter.api.AfterEach
@@ -8,7 +10,9 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import xtdb.api.TransactionKey
 import xtdb.api.log.Log
 import xtdb.api.log.ReplicaMessage
@@ -61,11 +65,13 @@ class FollowerLogProcessorTest {
     private fun makeProcessor(
         maxBufferedRecords: Int = 1024,
         hasExternalSource: Boolean = false,
+        meterRegistry: MeterRegistry? = null,
     ) =
         FollowerLogProcessor(
             allocator, bufferPool, dbState,
             compactor, watchers, null, null, afterReplicaMsgId = -1L,
             hasExternalSource = hasExternalSource,
+            meterRegistry = meterRegistry,
             maxBufferedRecords = maxBufferedRecords,
         )
 
@@ -218,6 +224,66 @@ class FollowerLogProcessorTest {
         verify { liveIndex.importTx(ext2) }
         assertEquals(1L, watchers.latestSourceMsgId,
             "latestSourceMsgId reflects only the source-log tx; ext-source txs leave it alone")
+
+        proc.close()
+    }
+
+    @Test
+    fun `records replica processing metrics`() = runTest {
+        val registry = SimpleMeterRegistry()
+        val proc = makeProcessor(meterRegistry = registry)
+
+        val blockProto = block { blockIndex = 0 }.toByteArray()
+        every { bufferPool.getByteArray(BlockCatalog.blockFilePath(0)) } returns blockProto
+
+        proc.processRecords(listOf(
+            record(0, ReplicaMessage.ResolvedTx(1, Instant.now(), true, null, emptyMap())),
+            record(1, ReplicaMessage.ResolvedTx(2, Instant.now(), true, null, emptyMap())),
+            record(2, ReplicaMessage.BlockBoundary(0, 2)),
+            record(3, ReplicaMessage.BlockUploaded(Storage.VERSION, 1, 0, 2, emptyList())),
+        ))
+
+        fun timerCount(msgType: String) = registry.find("xtdb.replica.process.timer")
+            .tags("db", "test", "msg.type", msgType)
+            .timer()?.count() ?: 0L
+
+        assertEquals(2L, timerCount("ResolvedTx"))
+        assertEquals(1L, timerCount("BlockBoundary"))
+        assertEquals(1L, timerCount("BlockUploaded"))
+
+        val bufferTimer = registry.find("xtdb.replica.block.buffer.timer").tag("db", "test").timer()
+        assertNotNull(bufferTimer, "block buffer timer should be registered")
+        assertEquals(1L, bufferTimer!!.count(), "one block buffer window")
+        assertTrue(bufferTimer.totalTime(java.util.concurrent.TimeUnit.NANOSECONDS) >= 0)
+
+        val bufferedRecords = registry.find("xtdb.replica.block.buffered.records").tag("db", "test").summary()
+        assertNotNull(bufferedRecords, "buffered records summary should be registered")
+        assertEquals(1L, bufferedRecords!!.count())
+        assertEquals(0.0, bufferedRecords.totalAmount(), "no records buffered when BlockUploaded follows BlockBoundary directly")
+
+        proc.close()
+    }
+
+    @Test
+    fun `buffered records summary captures size when records arrive between boundary and uploaded`() = runTest {
+        val registry = SimpleMeterRegistry()
+        val proc = makeProcessor(meterRegistry = registry)
+
+        val blockProto = block { blockIndex = 0 }.toByteArray()
+        every { bufferPool.getByteArray(BlockCatalog.blockFilePath(0)) } returns blockProto
+
+        proc.processRecords(listOf(
+            record(0, ReplicaMessage.BlockBoundary(0, 0)),
+            // these get buffered while we wait for BlockUploaded
+            record(1, ReplicaMessage.ResolvedTx(1, Instant.now(), true, null, emptyMap())),
+            record(2, ReplicaMessage.ResolvedTx(2, Instant.now(), true, null, emptyMap())),
+            record(3, ReplicaMessage.BlockUploaded(Storage.VERSION, 1, 0, 0, emptyList())),
+        ))
+
+        val bufferedRecords = registry.find("xtdb.replica.block.buffered.records").tag("db", "test").summary()
+        assertNotNull(bufferedRecords)
+        assertEquals(1L, bufferedRecords!!.count())
+        assertEquals(2.0, bufferedRecords.totalAmount(), "two records buffered between boundary and uploaded")
 
         proc.close()
     }
