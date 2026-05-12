@@ -1,5 +1,8 @@
 package xtdb.postgres
 
+import clojure.lang.ILookup
+import clojure.lang.Keyword
+import io.micrometer.core.instrument.MeterRegistry
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.test.runTest
@@ -191,6 +194,46 @@ class PostgresSourceIntegrationTest {
             assertEquals("Alice", rows[0]["name"])
             assertEquals("Bob", rows[1]["name"])
             assertEquals("Charlie", rows[2]["name"])
+        }
+    }
+
+    @Test
+    fun `metrics populate against real Postgres`() = runTest(timeout = 60.seconds) {
+        val pubName = "test_pub_${UUID.randomUUID().toString().replace("-", "_")}"
+        val slotName = "test_slot_${UUID.randomUUID().toString().replace("-", "_")}"
+        val sourceTopic = "test-topic-${UUID.randomUUID()}"
+
+        pgExecute(
+            "CREATE TABLE IF NOT EXISTS pg_metrics (_id INT PRIMARY KEY, name TEXT)",
+            "INSERT INTO pg_metrics (_id, name) VALUES (1, 'snapshot-row')",
+            "CREATE PUBLICATION $pubName FOR TABLE pg_metrics",
+        )
+
+        openNode(sourceTopic).use { node ->
+            // Reach into the node's primary registry directly — `addMeterRegistry` assumes a
+            // composite registry, which the node doesn't currently use (see Metrics.kt).
+            val metrics = (node as ILookup).valAt(Keyword.intern(null, "metrics-registry")) as MeterRegistry
+
+            attachPostgresSource(node, slotName = slotName, publicationName = pubName)
+            awaitTxs(node, 2, db = "cdc")
+
+            pgExecute("INSERT INTO pg_metrics (_id, name) VALUES (2, 'stream-row')")
+            awaitCondition("streamed row visible") {
+                xtQueryDb(node, "cdc", "SELECT _id FROM public.pg_metrics WHERE _id = 2").isNotEmpty()
+            }
+
+            fun metric(name: String) =
+                metrics.find(name).tags("db", "cdc", "source", slotName, "source_type", "postgres")
+
+            assertTrue((metric("xtdb.postgres_source.events.total").counter()?.count() ?: 0.0) >= 1.0,
+                "events.total should have counted the streamed row")
+            assertTrue((metric("xtdb.postgres_source.commits.total").counter()?.count() ?: 0.0) >= 1.0,
+                "commits.total should have counted the streamed commit")
+
+            // Confirms the pg_replication_slots query path works against real Postgres —
+            // the gauge pulls on read so this should be populated immediately after streaming.
+            assertTrue((metric("xtdb.postgres_source.wal_lag_bytes").gauge()?.value() ?: -1.0) >= 0.0,
+                "wal_lag_bytes should be readable from pg_replication_slots once streaming")
         }
     }
 
