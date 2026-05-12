@@ -21,7 +21,7 @@ import xtdb.arrow.Relation
 import java.time.ZonedDateTime
 import java.util.*
 
-class AdbcTest {
+class FlightSqlAdbcTest {
 
     private lateinit var xtdb: Xtdb
 
