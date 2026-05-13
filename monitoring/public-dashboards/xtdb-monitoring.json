@@ -2290,7 +2290,7 @@
             "h": 6,
             "w": 24,
             "x": 0,
-            "y": 110
+            "y": 40
           },
           "id": 39,
           "options": {
@@ -2330,6 +2330,555 @@
           ],
           "title": "Follower / Leader ($database)",
           "type": "state-timeline"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "description": "Cluster-average (quantile(0.5, …) across the published percentile series) of handleRecord time, broken out per ReplicaMessage variant. The \"what does steady state look like\" view — ResolvedTx carries the per-tx baseline, TriesAdded / TriesDeleted should sit close to zero, and BlockBoundary / BlockUploaded show how long routine block-transition work takes when nothing is contended. Pair with the p99 panel: if p50 stays flat while p99 climbs, the followers are seeing occasional stalls rather than a uniform slowdown.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 0,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "showValues": false,
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 8,
+            "x": 0,
+            "y": 46
+          },
+          "id": 48,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.2.1",
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "quantile(0.5, xtdb_replica_process_timer_seconds{db=\"$database\"}) by (msg_type)",
+              "legendFormat": "{{msg_type}} p50",
+              "range": true,
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              }
+            }
+          ],
+          "title": "Replica record processing — p50 by message type",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "description": "p99 of handleRecord time, broken out per ReplicaMessage variant. The follower's primary \"where is time going under load\" view — a healthy replica's ResolvedTx line dominates everything else; TriesAdded / TriesDeleted should stay flat and cheap; BlockUploaded spikes are expected once per block but shouldn't trend up over time. If BlockBoundary rises noticeably, suspect contention on the pending-block setup path. Compare with the p50 panel to disambiguate \"everything's slower\" from \"tail-only stalls\".",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 0,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "showValues": false,
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 8,
+            "x": 8,
+            "y": 46
+          },
+          "id": 50,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.2.1",
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "quantile(0.99, xtdb_replica_process_timer_seconds{db=\"$database\"}) by (msg_type)",
+              "legendFormat": "{{msg_type}} p99",
+              "range": true,
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              }
+            }
+          ],
+          "title": "Replica record processing — p99 by message type",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "description": "Records-per-second handled by the follower, split by message type. Together with Panel 1 this tells the \"busy vs slow\" story: a flat p99 with rising throughput is healthy; rising p99 with flat throughput is the case that warrants investigation. Also the simplest \"is the follower receiving anything?\" signal.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 0,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "showValues": false,
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "cps"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 8,
+            "x": 16,
+            "y": 46
+          },
+          "id": 51,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.2.1",
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "sum by (msg_type) (rate(xtdb_replica_process_timer_seconds_count{db=\"$database\"}[1m]))",
+              "legendFormat": "{{msg_type}}/s",
+              "range": true,
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              }
+            }
+          ],
+          "title": "Replica record throughput — by message type",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "description": "Time the follower spends with a pendingBlock open — from receiving BlockBoundary to receiving the matching BlockUploaded (i.e. waiting for the leader's BlockUploader to finish writing and announce the block). Pair with the leader's Block Uploaded Timer panel: if the follower's buffer window is large but the leader's upload timer is small, the lag is in propagation (log / message bus); if both are large, the upload itself is the bottleneck.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 0,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "showValues": false,
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 8,
+            "x": 0,
+            "y": 55
+          },
+          "id": 52,
+          "options": {
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.2.1",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "editorMode": "code",
+              "expr": "quantile(0.5, xtdb_replica_block_buffer_timer_seconds{db=\"$database\"})",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "Average Cluster",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "editorMode": "code",
+              "expr": "quantile(0.99, xtdb_replica_block_buffer_timer_seconds{db=\"$database\"})",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "99% Cluster",
+              "range": true,
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "editorMode": "code",
+              "expr": "quantile(0.999, xtdb_replica_block_buffer_timer_seconds{db=\"$database\"})",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "99.9% Cluster",
+              "range": true,
+              "refId": "C"
+            }
+          ],
+          "title": "Block buffer window",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "description": "How many replica records get buffered between a BlockBoundary and its matching BlockUploaded. 0 is the happy path — BlockUploaded followed BlockBoundary with no intervening traffic. Sustained non-zero values mean the follower is receiving txs faster than the leader is finishing block uploads, so each block window catches more in-flight records; if max approaches maxBufferedRecords (default 1024) the processor will start applying back-pressure on the log.\n\nThe underlying meter is a DistributionSummary with no published percentiles, so we plot the peak (_max) and the per-block mean (_sum / _count over a window). For a true distribution view, add .publishPercentiles(...) to the meter and switch to a quantile(…) aggregation.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 0,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "showValues": false,
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 8,
+            "x": 8,
+            "y": 55
+          },
+          "id": 53,
+          "options": {
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.2.1",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "editorMode": "code",
+              "expr": "max(xtdb_replica_block_buffered_records_max{db=\"$database\"})",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "peak",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "editorMode": "code",
+              "expr": "sum(rate(xtdb_replica_block_buffered_records_sum{db=\"$database\"}[1m])) / sum(rate(xtdb_replica_block_buffered_records_count{db=\"$database\"}[1m]))",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "mean per block (1m)",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Records buffered per block",
+          "type": "timeseries"
         }
       ],
       "repeat": "database",
@@ -2395,7 +2944,7 @@
             "h": 7,
             "w": 3,
             "x": 0,
-            "y": 117
+            "y": 129
           },
           "id": 47,
           "options": {
@@ -2477,7 +3026,7 @@
             "h": 7,
             "w": 3,
             "x": 3,
-            "y": 117
+            "y": 129
           },
           "id": 45,
           "options": {
@@ -2587,7 +3136,7 @@
             "h": 7,
             "w": 6,
             "x": 6,
-            "y": 117
+            "y": 129
           },
           "id": 43,
           "options": {
@@ -2692,7 +3241,7 @@
             "h": 7,
             "w": 6,
             "x": 12,
-            "y": 117
+            "y": 129
           },
           "id": 46,
           "options": {
@@ -2811,7 +3360,7 @@
             "h": 7,
             "w": 6,
             "x": 18,
-            "y": 117
+            "y": 129
           },
           "id": 44,
           "options": {
@@ -2965,7 +3514,7 @@
             "h": 7,
             "w": 6,
             "x": 0,
-            "y": 548
+            "y": 169
           },
           "id": 15,
           "options": {
@@ -3070,7 +3619,7 @@
             "h": 7,
             "w": 6,
             "x": 6,
-            "y": 548
+            "y": 169
           },
           "id": 16,
           "options": {
@@ -3192,7 +3741,7 @@
             "h": 7,
             "w": 6,
             "x": 12,
-            "y": 548
+            "y": 169
           },
           "id": 21,
           "options": {
@@ -3297,7 +3846,7 @@
             "h": 7,
             "w": 6,
             "x": 18,
-            "y": 548
+            "y": 169
           },
           "id": 17,
           "options": {
@@ -3402,7 +3951,7 @@
             "h": 7,
             "w": 6,
             "x": 0,
-            "y": 555
+            "y": 176
           },
           "id": 18,
           "options": {
@@ -3524,7 +4073,7 @@
             "h": 7,
             "w": 6,
             "x": 6,
-            "y": 555
+            "y": 176
           },
           "id": 19,
           "options": {
@@ -3629,7 +4178,7 @@
             "h": 7,
             "w": 6,
             "x": 12,
-            "y": 555
+            "y": 176
           },
           "id": 25,
           "options": {
@@ -3734,7 +4283,7 @@
             "h": 7,
             "w": 6,
             "x": 18,
-            "y": 555
+            "y": 176
           },
           "id": 26,
           "options": {
@@ -3839,7 +4388,7 @@
             "h": 7,
             "w": 6,
             "x": 0,
-            "y": 562
+            "y": 183
           },
           "id": 29,
           "options": {
@@ -3944,7 +4493,7 @@
             "h": 7,
             "w": 6,
             "x": 6,
-            "y": 562
+            "y": 183
           },
           "id": 30,
           "options": {
@@ -4017,7 +4566,7 @@
             "h": 7,
             "w": 6,
             "x": 12,
-            "y": 562
+            "y": 183
           },
           "id": 12,
           "options": {
@@ -4127,7 +4676,7 @@
             "h": 7,
             "w": 6,
             "x": 18,
-            "y": 562
+            "y": 183
           },
           "id": 11,
           "options": {
@@ -4255,7 +4804,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 569
+            "y": 190
           },
           "id": 13,
           "options": {
@@ -4416,7 +4965,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 569
+            "y": 190
           },
           "id": 40,
           "options": {
@@ -4517,13 +5066,13 @@
     ]
   },
   "time": {
-    "from": "2026-05-12T12:16:59.668Z",
-    "to": "2026-05-12T12:50:22.521Z"
+    "from": "now-5m",
+    "to": "now"
   },
   "timepicker": {},
   "timezone": "browser",
   "title": "XTDB: Monitoring Dashboard",
   "uid": "aeews5bgs0zk0b",
-  "version": 21,
+  "version": 24,
   "weekStart": ""
 }
