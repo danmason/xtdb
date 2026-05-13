@@ -362,6 +362,20 @@ class PgWireDriver(
             }
             .toMap()
 
+    override fun queryWalLagBytes(): Long? =
+        jdbi.withHandle<Long?, Exception> { handle ->
+            handle.createQuery(
+                """
+                SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn)::bigint AS lag_bytes
+                FROM pg_replication_slots
+                WHERE slot_name = :slot
+                """.trimIndent()
+            )
+                .bind("slot", slotName)
+                .map { rs, _ -> rs.getLong("lag_bytes") }
+                .findOne().orElse(null)
+        }
+
     override fun close() {}
 
     companion object {

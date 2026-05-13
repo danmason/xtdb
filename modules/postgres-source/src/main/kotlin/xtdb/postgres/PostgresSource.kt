@@ -1,5 +1,10 @@
 package xtdb.postgres
 
+import io.micrometer.core.instrument.Counter
+import io.micrometer.core.instrument.DistributionSummary
+import io.micrometer.core.instrument.Gauge
+import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.Tag
 import kotlinx.coroutines.*
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -26,6 +31,8 @@ import xtdb.time.InstantUtil.asMicros
 import xtdb.util.*
 import java.nio.ByteBuffer
 import java.time.Instant
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import com.google.protobuf.Any as ProtoAny
 
 private val LOG = PostgresSource::class.logger
@@ -36,7 +43,77 @@ class PostgresSource(
     private val dbName: String,
     private val driver: PostgresDriver,
     private val slotName: String,
+    meterRegistry: MeterRegistry? = null,
 ) : ExternalSource {
+
+    private val tags = listOf(
+        Tag.of("db", dbName),
+        Tag.of("source", slotName),
+        Tag.of("source_type", "postgres"),
+    )
+
+    private val eventsCounter: Counter? = meterRegistry?.let {
+        Counter.builder("xtdb.postgres_source.events.total")
+            .description("pgoutput insert/update/delete events ingested")
+            .tags(tags)
+            .register(it)
+    }
+
+    private val commitsCounter: Counter? = meterRegistry?.let {
+        Counter.builder("xtdb.postgres_source.commits.total")
+            .description("source transactions committed")
+            .tags(tags)
+            .register(it)
+    }
+
+    private val commitLag: DistributionSummary? = meterRegistry?.let {
+        DistributionSummary.builder("xtdb.postgres_source.commit_lag_seconds")
+            .description("wall-clock seconds between source commit and apply")
+            .baseUnit("seconds")
+            .publishPercentiles(0.5, 0.95, 0.99)
+            .tags(tags)
+            .register(it)
+    }
+
+    // epoch seconds of the latest applied commit; 0 until the first event
+    private val lastEventEpochSeconds = AtomicLong(0)
+
+    // 1 while a replication stream is open, 0 otherwise
+    private val connectionState = AtomicInteger(0)
+
+    // Last successful WAL-lag read; null until first query.
+    // Retained on failure so a transient query blip doesn't reset the gauge to 0.
+    @Volatile private var lastKnownWalLagBytes: Long? = null
+
+    private fun walLagBytes(): Long? {
+        try {
+            driver.queryWalLagBytes()?.let { lastKnownWalLagBytes = it }
+        } catch (e: Exception) {
+            LOG.debug(e) { "[$dbName] Failed to query WAL lag" }
+        }
+        return lastKnownWalLagBytes
+    }
+
+    init {
+        meterRegistry?.let { reg ->
+            Gauge.builder("xtdb.postgres_source.last_event_time", lastEventEpochSeconds) { it.get().toDouble() }
+                .description("epoch seconds of the most recently applied source commit")
+                .baseUnit("seconds")
+                .tags(tags)
+                .register(reg)
+
+            Gauge.builder("xtdb.postgres_source.connection_state", connectionState) { it.get().toDouble() }
+                .description("1 if a replication stream is currently open, 0 otherwise")
+                .tags(tags)
+                .register(reg)
+
+            Gauge.builder("xtdb.postgres_source.wal_lag_bytes", this) { walLagBytes()?.toDouble() ?: 0.0 }
+                .description("WAL bytes between pg_current_wal_lsn and our slot's confirmed_flush_lsn")
+                .baseUnit("bytes")
+                .tags(tags)
+                .register(reg)
+        }
+    }
 
     @Serializable
     @SerialName("!Postgres")
@@ -50,6 +127,7 @@ class PostgresSource(
         override fun open(
             dbName: String,
             remotes: Map<RemoteAlias, Remote>,
+            meterRegistry: MeterRegistry?,
         ): ExternalSource {
             val raw = remotes[remote]
                 ?: throw Incorrect(
@@ -72,7 +150,7 @@ class PostgresSource(
                 slotName, publicationName, schemaIncludeList,
             )
 
-            return PostgresSource(dbName, driver, slotName)
+            return PostgresSource(dbName, driver, slotName, meterRegistry)
         }
 
         override fun writeTo(dbConfig: DatabaseConfig.Builder) {
@@ -198,20 +276,33 @@ class PostgresSource(
 
     private suspend fun streamChanges(txIndexer: TxIndexer, startLsn: Long) {
         driver.openStream(startLsn).use { stream ->
-            while (currentCoroutineContext().isActive) {
-                stream.nextTransaction { tx ->
-                    val token = postgresSourceToken {
-                        latestCommittedLsn = tx.lsn
-                        snapshotCompleted = true
-                    }.toByteArray()
+            connectionState.set(1)
+            try {
+                while (currentCoroutineContext().isActive) {
+                    stream.nextTransaction { tx ->
+                        val token = postgresSourceToken {
+                            latestCommittedLsn = tx.lsn
+                            snapshotCompleted = true
+                        }.toByteArray()
 
-                    txIndexer.indexTx(token, systemTime = tx.commitTime) { openTx ->
-                        for (op in tx.ops) {
-                            writeOp(openTx, dbName, op)
+                        txIndexer.indexTx(token, systemTime = tx.commitTime) { openTx ->
+                            for (op in tx.ops) {
+                                writeOp(openTx, dbName, op)
+                            }
+                            TxResult.Committed()
                         }
-                        TxResult.Committed()
+
+                        // Record only on successful apply — failures will replay this tx.
+                        eventsCounter?.increment(tx.ops.size.toDouble())
+                        commitsCounter?.increment()
+                        lastEventEpochSeconds.set(tx.commitTime.epochSecond)
+                        commitLag?.record(
+                            (Instant.now().toEpochMilli() - tx.commitTime.toEpochMilli()) / 1000.0,
+                        )
                     }
                 }
+            } finally {
+                connectionState.set(0)
             }
         }
     }

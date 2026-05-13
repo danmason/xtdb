@@ -49,4 +49,10 @@ interface PostgresDriver : AutoCloseable {
     }
 
     suspend fun openStream(startLsn: Long): ChangeStream
+
+    /**
+     * `pg_current_wal_lsn() − confirmed_flush_lsn` for our slot on the source DB.
+     * Returns null if the slot is not (yet) visible.
+     */
+    fun queryWalLagBytes(): Long?
 }
