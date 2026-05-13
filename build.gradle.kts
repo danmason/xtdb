@@ -144,12 +144,23 @@ allprojects {
             }
         }
 
-        if (plugins.hasPlugin("org.jetbrains.dokka"))
-            tasks.register<Jar>("dokkaJavadocJar") {
-                dependsOn(tasks.dokkaJavadoc)
-                from(tasks.dokkaJavadoc.flatMap { it.outputDirectory })
-                archiveClassifier.set("javadoc")
+        if (plugins.hasPlugin("org.jetbrains.dokka")) {
+            // Modules without a public Java API publish a stub (empty) javadoc jar to satisfy
+            // Maven Central's requirement without paying the dokka cost on every deploy.
+            // Real dokka javadoc is still produced for :xtdb-api and :xtdb-core.
+            val modulesWithPublicJavaApi = setOf(":xtdb-api", ":xtdb-core")
+            if (proj.path in modulesWithPublicJavaApi) {
+                tasks.register<Jar>("dokkaJavadocJar") {
+                    dependsOn(tasks.dokkaJavadoc)
+                    from(tasks.dokkaJavadoc.flatMap { it.outputDirectory })
+                    archiveClassifier.set("javadoc")
+                }
+            } else {
+                tasks.register<Jar>("dokkaJavadocJar") {
+                    archiveClassifier.set("javadoc")
+                }
             }
+        }
 
         tasks.test {
             jvmArgs(defaultJvmArgs + sixGBJvmArgs)
