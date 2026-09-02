@@ -36,6 +36,7 @@ import org.testcontainers.kafka.ConfluentKafkaContainer
 import xtdb.XtdbInternal
 import xtdb.api.Xtdb
 import xtdb.api.log.Log.*
+import xtdb.api.metrics.HealthzConfig
 import xtdb.api.storage.Storage
 import xtdb.cache.DiskCache
 import xtdb.database.Database
@@ -45,6 +46,11 @@ import xtdb.log.proto.trieMetadata
 import xtdb.util.MsgIdUtil
 import xtdb.util.asPath
 import xtdb.util.closeAll
+import java.net.ServerSocket
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
 import java.nio.ByteBuffer
 import java.nio.file.Path
 import java.time.Duration
@@ -1019,6 +1025,156 @@ class KafkaClusterTest {
             }
             val primary = (node as XtdbInternal).dbCatalog.primary
             assertEquals(null, primary.ingestionError, "node must replay cleanly from the truncated prefix")
+        }
+    }
+
+    @Test
+    @Timeout(value = 90, unit = java.util.concurrent.TimeUnit.SECONDS)
+    fun `read-only secondary starts cleanly against a fully-truncated log with no persisted block (#5909 follow-up)`(
+        @TempDir primaryStorage1: Path,
+        @TempDir primaryStorage2: Path,
+        @TempDir secondaryStorage: Path,
+        @TempDir roStorage: Path,
+        @TempDir cacheDir1: Path,
+        @TempDir cacheDir2: Path,
+    ) {
+        // Two entirely separate primaries -- the second node must not remember the first
+        // session's ATTACH, or its own re-ATTACH of `secondary` collides ("Database already
+        // exists"). Only `secondary`'s own Kafka topics need to carry over between sessions.
+        val primaryTopic1 = "trunc-ro-primary1-${UUID.randomUUID()}"
+        val primaryTopic2 = "trunc-ro-primary2-${UUID.randomUUID()}"
+        val secondaryTopic = "trunc-ro-secondary-${UUID.randomUUID()}"
+        val secondaryReplicaTopic = "$secondaryTopic-replica"
+        val healthzPort = ServerSocket(0).use { it.localPort }
+
+        // Write real, committed data to `secondary` -- but never flush a block, so nothing ever
+        // durably records a resume position past the log's start. This mirrors the production
+        // shape from the #5909 follow-up: a database whose `getLatestProcessedMsgId` has never
+        // advanced past -1, because no BlockBoundary/TriesAdded was ever produced for it.
+        Xtdb.openNode {
+            server { port = 0 }; flightSql = null
+            diskCache(DiskCache.factory(cacheDir1))
+            logCluster("kafka", KafkaCluster.ClusterFactory(container.bootstrapServers))
+            log(KafkaCluster.LogFactory("kafka", primaryTopic1))
+            storage(Storage.local(primaryStorage1))
+            compactor { threads(0) }
+        }.use { node ->
+            node.connection.use { conn ->
+                conn.createStatement().use { stmt ->
+                    stmt.execute(
+                        """
+                        ATTACH DATABASE secondary WITH ${'$'}${'$'}
+                            log: !Kafka
+                              cluster: kafka
+                              topic: $secondaryTopic
+                            storage: !Local
+                              path: "${secondaryStorage.toString().replace("\\", "/")}"
+                        ${'$'}${'$'}""".trimIndent()
+                    )
+                }
+            }
+            node.createConnectionBuilder().database("secondary").build().use { conn ->
+                conn.createStatement().use { stmt ->
+                    stmt.execute("INSERT INTO foo (_id, x) VALUES ('a', 1)")
+                    stmt.execute("INSERT INTO foo (_id, x) VALUES ('b', 2)")
+                }
+            }
+        }
+
+        // Simulate retention eating everything written so far -- nobody ever flushed a block, so
+        // there was never a durable boundary to protect it.
+        AdminClient.create(mapOf<String, Any>("bootstrap.servers" to container.bootstrapServers)).use { admin ->
+            for (topic in listOf(secondaryTopic, secondaryReplicaTopic)) {
+                val tp = TopicPartition(topic, 0)
+                val endOffset = admin.listOffsets(mapOf(tp to org.apache.kafka.clients.admin.OffsetSpec.latest()))
+                    .all().get()[tp]!!.offset()
+                admin.deleteRecords(mapOf(tp to RecordsToDelete.beforeOffset(endOffset))).all().get()
+            }
+        }
+
+        // Fresh node, fresh storage -- attaches `secondary` as read-only against the now-empty,
+        // truncated topics. Nothing persisted means its resume point is -1: an unanchored
+        // subscription, which (per the tests above) picks up wherever the topic currently starts
+        // rather than erroring.
+        Xtdb.openNode {
+            server { port = 0 }; flightSql = null
+            diskCache(DiskCache.factory(cacheDir2))
+            logCluster("kafka", KafkaCluster.ClusterFactory(container.bootstrapServers))
+            log(KafkaCluster.LogFactory("kafka", primaryTopic2))
+            storage(Storage.local(primaryStorage2))
+            compactor { threads(0) }
+        }.use { node ->
+            node.connection.use { conn ->
+                conn.createStatement().use { stmt ->
+                    stmt.execute(
+                        """
+                        ATTACH DATABASE secondary WITH ${'$'}${'$'}
+                            log: !Kafka
+                              cluster: kafka
+                              topic: $secondaryTopic
+                            storage: !Local
+                              path: "${roStorage.toString().replace("\\", "/")}"
+                            mode: read-only
+                            critical: true
+                        ${'$'}${'$'}""".trimIndent()
+                    )
+                }
+            }
+
+            val cat = (node as XtdbInternal).dbCatalog
+            val deadline = System.currentTimeMillis() + 10_000
+            while (cat["secondary"] == null && System.currentTimeMillis() < deadline) {
+                Thread.sleep(100)
+            }
+            val secondary = cat["secondary"]
+            assertNotNull(secondary, "read-only secondary must attach")
+            assertEquals(
+                null, secondary?.ingestionError,
+                "a read-only secondary starting fresh against a truncated log must not error -- " +
+                    "an unanchored (-1) subscription silently picks up wherever the topic now starts"
+            )
+
+            // Persist the attach as durable storage-state on the primary, so the next boot
+            // re-derives `secondary` synchronously from disk -- not by racing an async replay of
+            // this session's ATTACH transaction off primaryTopic2 against healthz's boot-time
+            // snapshot (ig/init-key captures initial-target-message-ids before that replay can
+            // finish, so an unflushed attach is invisible to the very next healthz check).
+            //
+            // Wait on the *primary* specifically, not cat.syncAll -- that waits on every attached
+            // database including `secondary` itself, which (being read-only against an empty,
+            // truncated log) never advances and would time this out for exactly the reason under
+            // test.
+            val flushMsgId = cat.primary.sendFlushBlockMessage().msgId
+            cat.primary.awaitSourceBlocking(flushMsgId, Duration.ofSeconds(10))
+        }
+
+        // /healthz/started only ever sees databases known to dbCatalog at *boot* -- a live
+        // ATTACH on an already-running node is invisible to it. Restart with the attach fact
+        // now persisted in primaryStorage2, and with healthz configured this time, so `secondary`
+        // is present in its boot-time target snapshot.
+        Xtdb.openNode {
+            server { port = 0 }; flightSql = null
+            healthz(HealthzConfig(port = healthzPort))
+            diskCache(DiskCache.factory(cacheDir2))
+            logCluster("kafka", KafkaCluster.ClusterFactory(container.bootstrapServers))
+            log(KafkaCluster.LogFactory("kafka", primaryTopic2))
+            storage(Storage.local(primaryStorage2))
+            compactor { threads(0) }
+        }.use {
+            val resp = HttpClient.newHttpClient().send(
+                HttpRequest.newBuilder(URI.create("http://localhost:$healthzPort/healthz/started")).GET().build(),
+                HttpResponse.BodyHandlers.ofString()
+            )
+            assertEquals(
+                503, resp.statusCode(),
+                "a fresh read-only secondary against a truncated log with no persisted block should " +
+                    "permanently report catching-up: at (-1) can never reach target (> -1), with no " +
+                    "ingestionError to explain why -- this is the #5909 follow-up production shape"
+            )
+            assertTrue(
+                resp.body().contains("secondary"),
+                "the catching-up body should name `secondary` specifically: ${resp.body()}"
+            )
         }
     }
 
