@@ -74,8 +74,11 @@
         (Thread/sleep 100)
 
         (t/is (= [{:name "xtdb.query"
+                   ;; the in-process Clojure API connection tags itself "xtdb-clojure-api" - see
+                   ;; test-query-span-includes-application-name for a pgwire client's own value.
                    :attributes {"query.text" "SELECT 1"
-                                "query.peak_memory_bytes" true}
+                                "query.peak_memory_bytes" true
+                                "application.name" "xtdb-clojure-api"}
                    :children
                    [{:name "query.cursor.project"
                      :attributes {"cursor.page_count" "1"

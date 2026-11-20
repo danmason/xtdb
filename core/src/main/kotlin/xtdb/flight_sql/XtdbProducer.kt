@@ -1,6 +1,7 @@
 package xtdb.flight_sql
 
 import xtdb.InternalApi
+import xtdb.api.APPLICATION_NAME_PARAM
 import xtdb.encodeToBytes
 import xtdb.query.ParsedStatement
 import com.google.protobuf.Any as ProtoAny
@@ -244,7 +245,7 @@ class XtdbProducer(
             caller,
         ) { dbName ->
             unknownDbs.beforeConnect(dbName)
-            caller.connect(node, dbName)
+            caller.connect(node, dbName).also { it.setSessionParameter(APPLICATION_NAME_PARAM, "xtdb-flight-sql") }
         }
     }
 

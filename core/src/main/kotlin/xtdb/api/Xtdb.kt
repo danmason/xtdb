@@ -80,7 +80,7 @@ private fun parseSkipDbsEnv(skipDbs: String): Set<String> =
 // ParameterStatus echo read it back through [Xtdb.Connection.sessionParameters], derived from the live zone.
 private const val TIMEZONE_PARAM = "timezone"
 
-private const val APPLICATION_NAME_PARAM = "application_name"
+internal const val APPLICATION_NAME_PARAM = "application_name"
 
 interface Xtdb : DataSource, AdbcDatabase, AutoCloseable {
 
