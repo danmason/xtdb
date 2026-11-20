@@ -80,6 +80,8 @@ private fun parseSkipDbsEnv(skipDbs: String): Set<String> =
 // ParameterStatus echo read it back through [Xtdb.Connection.sessionParameters], derived from the live zone.
 private const val TIMEZONE_PARAM = "timezone"
 
+private const val APPLICATION_NAME_PARAM = "application_name"
+
 interface Xtdb : DataSource, AdbcDatabase, AutoCloseable {
 
     val allocator: BufferAllocator
@@ -636,7 +638,9 @@ interface Xtdb : DataSource, AdbcDatabase, AutoCloseable {
                 }
 
                 override fun executeQueryAt(basis: QueryBasis): QueryResult =
-                    QueryResult(-1, ensurePrepared().openQuery(openQueryArgs(), basis.toQueryOpts(tracer)).metered().toArrowReader())
+                    QueryResult(-1, ensurePrepared()
+                        .openQuery(openQueryArgs(), basis.toQueryOpts(tracer, sessionParameters[APPLICATION_NAME_PARAM]))
+                        .metered().toArrowReader())
 
                 override fun executeQuery(): QueryResult {
                     if (parsedStatement == null) throw Incorrect("SQL query not set", "xtdb.adbc/no-sql")
@@ -1194,7 +1198,7 @@ interface Xtdb : DataSource, AdbcDatabase, AutoCloseable {
             QueryBasis(b?.currentTime ?: clock.instant(), t?.txDefaultTz ?: defaultTz, snapshotToken, b?.snapshotTime)
         }
 
-        private fun queryOpts() = queryBasis().toQueryOpts(tracer)
+        private fun queryOpts() = queryBasis().toQueryOpts(tracer, sessionParameters[APPLICATION_NAME_PARAM])
 
         private class ShowPreparedQuery(
             override val parsed: ParsedStatement.ShowVariable,
